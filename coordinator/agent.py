@@ -57,7 +57,6 @@ PROCESSO DE ATENDIMENTO:
 5. Respeite as regras de ESCALAÇÃO definidas por cada agente
 6. Consolide os resultados em uma resposta empática, clara e humanizada ao cliente""",
         tools=[fetch_order, fetch_refund_eligibility, delegate],
-        show_tool_calls=True,
         markdown=True,
         add_history_to_context=True,
         num_history_runs=5,
@@ -78,7 +77,7 @@ app = agent_os.get_app()
 # CORS: allow Agent UI frontend (port 3000)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://frontend:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
