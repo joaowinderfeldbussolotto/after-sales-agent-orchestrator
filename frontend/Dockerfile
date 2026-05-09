@@ -19,6 +19,7 @@ RUN pnpm run build
 # Stage 3: runner — run with next start (no standalone required)
 FROM node:20-alpine AS runner
 WORKDIR /app
+RUN npm install -g pnpm
 ENV NODE_ENV=production
 COPY --from=builder /app ./
 EXPOSE 3000
