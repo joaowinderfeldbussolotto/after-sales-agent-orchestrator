@@ -52,10 +52,9 @@ CAPACIDADES PRÓPRIAS:
 PROCESSO DE ATENDIMENTO:
 1. Identifique o order_id na mensagem do cliente
 2. Busque os dados do pedido com fetch_order
-3. Compare a intenção do cliente com os critérios "Acionar quando" de cada agente acima
-4. Delegue ao(s) agente(s) correspondente(s) via delegate, incluindo exatamente
-   os campos listados em "Contexto necessário ao delegar" para cada agente
-5. Respeite as regras de escalação definidas por cada agente
+3. Use os critérios ACIONAR QUANDO de cada agente acima para decidir qual acionar
+4. Delegue via delegate incluindo o CONTEXTO NECESSÁRIO especificado por cada agente
+5. Respeite as regras de ESCALAÇÃO definidas por cada agente
 6. Consolide os resultados em uma resposta empática, clara e humanizada ao cliente""",
         tools=[fetch_order, fetch_refund_eligibility, delegate],
         show_tool_calls=True,

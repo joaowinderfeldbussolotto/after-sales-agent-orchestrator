@@ -36,10 +36,23 @@ financial_agent = Agent(
         generate_voucher,
         get_consumer_rights,
     ],
+    # O campo description é tratado como auto-descrição para o coordenador:
+    # ele é injetado diretamente no system prompt do coordenador em tempo de execução.
     a2a=A2AServerConfig(
         url="http://financial:8002",
         name="financial-agent",
-        description="Reembolsos, vouchers e direitos do consumidor (CDC)",
+        description="""Especialista em reembolsos, vouchers e direitos do consumidor (CDC).
+
+ACIONAR QUANDO:
+- Solicitação de reembolso ou estorno de pagamento
+- Pedido de voucher ou compensação por má experiência
+- Dúvidas sobre direitos do consumidor ou CDC
+- Produto com defeito dentro do prazo de garantia
+- Escalação do agente logístico (atraso grave ou escalate_financial=true)
+
+CONTEXTO NECESSÁRIO AO DELEGAR: order_id, order_date, items_total, freight_paid, payment_method, return_reason
+
+ESCALAÇÃO: Nenhuma — agente terminal do fluxo financeiro""",
         version="1.0.0",
     ),
     verbose=True,
@@ -77,28 +90,9 @@ TASKS: dict[str, dict] = {}
 
 @app.get("/.well-known/agent-card.json")
 def agent_card():
-    """Discovery A2A — retorna o Agent Card com metadados de roteamento."""
+    """Discovery A2A — retorna o Agent Card."""
     card = financial_agent.a2a.to_agent_card(url="http://financial:8002")
-    data = card.model_dump()
-    data["x_routing"] = {
-        "triggers": [
-            "Solicitação de reembolso ou estorno de pagamento",
-            "Pedido de voucher ou compensação por má experiência",
-            "Dúvidas sobre direitos do consumidor ou CDC",
-            "Produto com defeito dentro do prazo de garantia",
-            "Escalação do agente logístico (atraso grave ou escalate_financial=true)",
-        ],
-        "required_context": [
-            "order_id",
-            "order_date",
-            "items_total",
-            "freight_paid",
-            "payment_method",
-            "return_reason",
-        ],
-        "escalation_hint": None,
-    }
-    return data
+    return card.model_dump()
 
 
 @app.post("/")

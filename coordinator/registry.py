@@ -1,31 +1,36 @@
 import os
 import httpx
 
-# Agent registry: URLs come from env vars; all routing logic comes from Agent Cards.
-# To onboard a new agent: add its URL here and implement x_routing in its Agent Card.
+# Agent registry: URLs come from env vars; routing rules come from each agent's
+# own description field in its Agent Card — no logic is hardcoded here.
+# To onboard a new agent: add its URL below and write self-describing rules
+# in the description field of its Agent Card.
 AGENT_CONFIGS = [
     {
         "name": "logistics-agent",
         "base_url": os.getenv("LOGISTICS_URL", "http://logistics:8001"),
         "card_path": "/.well-known/agent-card.json",
+        "protocol": "json-rpc",
     },
     {
         "name": "financial-agent",
         "base_url": os.getenv("FINANCIAL_URL", "http://financial:8002"),
         "card_path": "/.well-known/agent-card.json",
+        "protocol": "json-rpc",
     },
 ]
 
-# name → {card, base_url}
+# name → {card, base_url, protocol}
 AGENT_REGISTRY: dict[str, dict] = {}
 
 
 async def discover_agents() -> str:
     """Fetch Agent Cards, populate AGENT_REGISTRY, return formatted prompt section.
 
-    The returned string contains every agent's self-described routing rules
-    (x_routing.triggers, required_context, escalation_hint) so the coordinator
-    can make routing decisions purely from what agents declare about themselves.
+    Each agent's description field is treated as a self-contained system prompt
+    block for the coordinator — it declares when the agent should be triggered,
+    what context to pass, and any escalation rules. The coordinator injects this
+    verbatim so routing logic lives entirely in the agents, not here.
     """
     lines = ["## Agentes Especializados Disponíveis\n"]
 
@@ -39,28 +44,13 @@ async def discover_agents() -> str:
                 AGENT_REGISTRY[config["name"]] = {
                     "card": card,
                     "base_url": config["base_url"],
+                    "protocol": config["protocol"],
                 }
-
-                routing = card.get("x_routing", {})
-                triggers = routing.get("triggers", [])
-                required = routing.get("required_context", [])
-                escalation = routing.get("escalation_hint")
-
-                lines.append(f"### {card.get('name', config['name'])} — Online")
-                lines.append(f"**Descrição:** {card.get('description', 'N/A')}\n")
-
-                if triggers:
-                    lines.append("**Acionar quando:**")
-                    for t in triggers:
-                        lines.append(f"- {t}")
-                    lines.append("")
-
-                if required:
-                    lines.append(f"**Contexto necessário ao delegar:** {', '.join(required)}\n")
-
-                if escalation:
-                    lines.append(f"**Regra de escalação:** {escalation}\n")
-
+                name = card.get("name", config["name"])
+                description = card.get("description", "Sem descrição.")
+                lines.append(f"### {name} — Online")
+                lines.append(description)
+                lines.append("")
             except Exception as e:
                 lines.append(f"### {config['name']} — Offline ({type(e).__name__})\n")
 
