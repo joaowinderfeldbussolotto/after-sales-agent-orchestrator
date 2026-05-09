@@ -63,6 +63,7 @@ async def delegate(agent_name: str, task: str) -> str:
         "method": "message/send",
         "params": {
             "message": {
+            "kind": "message",
                 "role": "user",
                 "messageId": f"msg-{id(task)}",
                 "parts": [{"kind": "text", "text": task}],
