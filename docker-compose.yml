@@ -52,15 +52,13 @@ services:
       timeout: 5s
       retries: 6
 
-  # ── Coordinator — Agno AgentOS + AG-UI ────────────────────────────────────
+  # ── Coordinator — LangGraph ReAct Agent ───────────────────────────────────
   coordinator:
     build:
       context: ./coordinator
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
-    volumes:
-      - coordinator-db:/data
+      - "2024:2024"
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY}
       - LOGISTICS_URL=http://logistics:8001
@@ -71,25 +69,22 @@ services:
       financial:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/status"]
+      test: ["CMD", "curl", "-f", "http://localhost:2024/ok"]
       interval: 10s
       timeout: 5s
-      retries: 6
+      retries: 8
 
-  # ── Frontend — Agent UI (Next.js) ──────────────────────────────────────────
+  # ── Frontend — Agent Chat UI (Next.js) ────────────────────────────────────
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        # Browser accesses coordinator via host port mapping, not Docker network
-        NEXT_PUBLIC_API_URL: http://localhost:8000
+        NEXT_PUBLIC_API_URL: http://localhost:2024
+        NEXT_PUBLIC_ASSISTANT_ID: coordinator
     ports:
       - "3000:3000"
     depends_on:
       coordinator:
         condition: service_healthy
     restart: unless-stopped
-
-volumes:
-  coordinator-db:  # SQLite for Agno session storage

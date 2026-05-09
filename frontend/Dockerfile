@@ -1,22 +1,24 @@
-# Stage 1: deps — clone agent-ui and install
+# Stage 1: deps — clone agent-chat-ui and install
 FROM node:20-alpine AS deps
 WORKDIR /app
 RUN apk add --no-cache git
 RUN npm install -g pnpm
-RUN git clone --depth 1 https://github.com/agno-agi/agent-ui.git .
+RUN git clone --depth 1 https://github.com/langchain-ai/agent-chat-ui.git .
 RUN pnpm install --frozen-lockfile
 
-# Stage 2: build — bake NEXT_PUBLIC_API_URL at build time
+# Stage 2: build — bake env vars at build time
 FROM node:20-alpine AS builder
 WORKDIR /app
 RUN npm install -g pnpm
 COPY --from=deps /app ./
-# Browser accesses coordinator via host-mapped port (not internal Docker network)
-ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+# Browser accesses LangGraph server via host-mapped port
+ARG NEXT_PUBLIC_API_URL=http://localhost:2024
+ARG NEXT_PUBLIC_ASSISTANT_ID=coordinator
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_ASSISTANT_ID=$NEXT_PUBLIC_ASSISTANT_ID
 RUN pnpm run build
 
-# Stage 3: runner — run with next start (no standalone required)
+# Stage 3: runner
 FROM node:20-alpine AS runner
 WORKDIR /app
 RUN npm install -g pnpm
