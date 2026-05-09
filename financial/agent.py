@@ -91,7 +91,7 @@ TASKS: dict[str, dict] = {}
 @app.get("/.well-known/agent-card.json")
 def agent_card():
     """Discovery A2A — retorna o Agent Card."""
-    card = financial_agent.a2a.to_agent_card(url="http://financial:8002")
+    card = financial_agent.a2a
     return card.model_dump()
 
 
