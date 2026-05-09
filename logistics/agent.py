@@ -8,6 +8,7 @@ PydanticAgent.instrument_all()
 
 logistics_agent = Agent(
     "groq:meta-llama/llama-4-scout-17b-16e-instruct",
+    name="Logistics Agent",
     instructions="""Você é o Agente de Logística de um e-commerce brasileiro.
 
 RESPONSABILIDADES:
@@ -41,10 +42,11 @@ FORMATO DE RESPOSTA:
         tools.update_order_status,
         tools.calculate_delay_days,
     ],
+    instrument=True,
 )
 
-# O campo description é tratado como auto-descrição para o coordenador:
-# ele é injetado diretamente no system prompt do coordenador em tempo de execução.
+
+
 app = logistics_agent.to_a2a(
     name="logistics-agent",
     description="""Especialista em rastreamento de pedidos, ocorrências logísticas e frete reverso.
