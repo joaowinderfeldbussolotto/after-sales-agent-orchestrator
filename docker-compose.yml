@@ -15,6 +15,28 @@ services:
       timeout: 3s
       retries: 5
 
+  # ── Orders MCP Server (FastMCP) ───────────────────────────────────────────
+  # Centraliza acesso à Orders API. Coordinator/agents consomem só as tools
+  # permitidas para seu domínio.
+  orders-mcp:
+    build:
+      context: ./orders-mcp
+      dockerfile: Dockerfile
+    ports:
+      - "8004:8004"
+    environment:
+      - ORDERS_API_URL=http://mock-api:8003
+    depends_on:
+      mock-api:
+        condition: service_healthy
+    healthcheck:
+      # MCP endpoint só responde a POST/streaming; sem -f para aceitar 4xx
+      # (qualquer resposta HTTP confirma que o servidor está aceitando conexões).
+      test: ["CMD-SHELL", "curl -sS --max-time 3 -o /dev/null http://localhost:8004/mcp || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
   # ── Logistics Agent — PydanticAI A2A Server ────────────────────────────────
   logistics:
     build:
@@ -28,8 +50,11 @@ services:
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
       - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+      - ORDERS_MCP_URL=http://orders-mcp:8004/mcp
     depends_on:
       mock-api:
+        condition: service_healthy
+      orders-mcp:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/.well-known/agent-card.json"]
@@ -49,8 +74,11 @@ services:
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
       - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+      - ORDERS_MCP_URL=http://orders-mcp:8004/mcp
     depends_on:
       mock-api:
+        condition: service_healthy
+      orders-mcp:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/.well-known/agent-card.json"]
@@ -69,10 +97,13 @@ services:
       - GROQ_API_KEY=${GROQ_API_KEY}
       - LOGISTICS_URL=http://logistics:8001
       - FINANCIAL_URL=http://financial:8002
+      - ORDERS_MCP_URL=http://orders-mcp:8004/mcp
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
       - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
     depends_on:
+      orders-mcp:
+        condition: service_healthy
       logistics:
         condition: service_healthy
       financial:

@@ -1,10 +1,20 @@
+import os
+
 from pydantic_ai import Agent
 from pydantic_ai.agent import Agent as PydanticAgent
+from pydantic_ai.mcp import MCPServerStreamableHTTP
 from langfuse import Langfuse
+
 from . import tools
 
 Langfuse()
 PydanticAgent.instrument_all()
+
+MCP_URL = os.getenv("ORDERS_MCP_URL", "http://orders-mcp:8004/mcp")
+
+# MCP toolset — fornece fetch_order, open_incident, update_order_status etc.
+# O agente decide quais usar pelos nomes/descrições; não filtramos client-side.
+mcp_server = MCPServerStreamableHTTP(MCP_URL)
 
 logistics_agent = Agent(
     "groq:meta-llama/llama-4-scout-17b-16e-instruct",
@@ -20,17 +30,15 @@ RESPONSABILIDADES:
 
 REGRAS:
 1. Sempre use calculate_delay_days antes de qualquer outra ação
-2. Se delayed=True e days > 3: abra uma ocorrência E sinalize no retorno que é necessário compensação financeira
-3. Se delayed=True e days <= 3: abra a ocorrência mas NÃO sinalize escalação financeira
-4. Se delayed=False: apenas informe o prazo atualizado
-5. Retorne SEMPRE um JSON estruturado com: status, delay_info, incident_id (se aberto), escalate_financial, message
+2. Se delayed=True: abra uma ocorrência logística (open_incident)
+3. Se delayed=False: apenas informe o prazo atualizado
+4. Retorne SEMPRE um JSON estruturado com: status, delay_days, incident_id (se aberto), tracking_events, message
 
 FORMATO DE RESPOSTA:
 {
-  "status": "on_time|delayed_minor|delayed_major|delivered",
+  "status": "on_time|delayed|delivered",
   "delay_days": 0,
   "incident_id": "ABC12345 ou null",
-  "escalate_financial": false,
   "tracking_events": [...],
   "message": "Mensagem humanizada para o cliente"
 }""",
@@ -38,13 +46,11 @@ FORMATO DE RESPOSTA:
         tools.track_package,
         tools.quote_reverse_shipping,
         tools.validate_address,
-        tools.open_incident,
-        tools.update_order_status,
         tools.calculate_delay_days,
     ],
+    toolsets=[mcp_server],
     instrument=True,
 )
-
 
 
 app = logistics_agent.to_a2a(
@@ -58,10 +64,6 @@ ACIONAR QUANDO:
 - Abertura de ocorrência por extravio, avaria ou não entregue
 - Validação ou problema com endereço de entrega
 
-CONTEXTO NECESSÁRIO AO DELEGAR: order_id, tracking_code, expected_delivery, current_status
-
-ESCALAÇÃO: Se a resposta contiver escalate_financial=true ou delay_days > 3,
-acionar também financial-agent com: order_id, order_date, items_total,
-freight_paid, payment_method e return_reason='atraso_entrega'""",
+CONTEXTO NECESSÁRIO AO DELEGAR: order_id, tracking_code, expected_delivery, current_status""",
     version="1.0.0",
 )

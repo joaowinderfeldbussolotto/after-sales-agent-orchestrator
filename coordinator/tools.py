@@ -2,38 +2,6 @@ import asyncio
 import httpx
 from langchain_core.tools import tool
 
-ORDERS_API = "http://mock-api:8003"
-
-
-@tool
-async def fetch_order(order_id: str) -> dict:
-    """Busca dados completos de um pedido pelo ID no sistema do e-commerce.
-
-    Args:
-        order_id: ID do pedido (ex: PV-2026-00142)
-    """
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.get(f"{ORDERS_API}/orders/{order_id}")
-        if r.status_code == 404:
-            return {"error": f"Pedido {order_id} não encontrado"}
-        r.raise_for_status()
-        return r.json()
-
-
-@tool
-async def fetch_refund_eligibility(order_id: str) -> dict:
-    """Verifica se um pedido está elegível para reembolso ou devolução.
-
-    Args:
-        order_id: ID do pedido
-    """
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.get(f"{ORDERS_API}/orders/{order_id}/refund-eligibility")
-        if r.status_code == 404:
-            return {"error": f"Pedido {order_id} não encontrado"}
-        r.raise_for_status()
-        return r.json()
-
 
 @tool
 async def delegate(agent_name: str, task: str) -> str:
@@ -63,7 +31,7 @@ async def delegate(agent_name: str, task: str) -> str:
         "method": "message/send",
         "params": {
             "message": {
-            "kind": "message",
+                "kind": "message",
                 "role": "user",
                 "messageId": f"msg-{id(task)}",
                 "parts": [{"kind": "text", "text": task}],
@@ -87,11 +55,9 @@ async def delegate(agent_name: str, task: str) -> str:
     result = response.get("result", {})
     status_state = result.get("status", {}).get("state")
 
-    # CrewAI — resposta síncrona, retorna 'completed' diretamente
     if status_state == "completed":
         return _extract_artifact_text(result)
 
-    # FastA2A (PydanticAI) — retorna 'working', faz polling
     task_id = result.get("id")
     if task_id and status_state in ("submitted", "working"):
         return await _poll_task(base_url, task_id, timeout=55)

@@ -1,9 +1,6 @@
-import httpx
 from datetime import date
 from pathlib import Path
 from crewai.tools import tool
-
-ORDERS_API = "http://mock-api:8003"
 
 
 # ── DETERMINÍSTICAS ──────────────────────────────────────────────────────────
@@ -69,49 +66,7 @@ def calculate_refund_amount(items_total: float, freight_paid: float, return_reas
     }
 
 
-# ── EFEITOS COLATERAIS ───────────────────────────────────────────────────────
-
-@tool("Emitir Reembolso")
-def issue_refund(order_id: str, amount: float, method: str) -> dict:
-    """Processa o reembolso de um pedido no sistema financeiro.
-
-    Args:
-        order_id: ID do pedido (ex: PV-2026-00142)
-        amount: Valor do reembolso em R$
-        method: Método de reembolso: 'credit_card', 'pix' ou 'voucher'
-
-    Returns:
-        dict com refund_id, status e estimated_days
-    """
-    r = httpx.post(
-        f"{ORDERS_API}/orders/{order_id}/refund",
-        json={"amount": amount, "method": method},
-        timeout=10.0,
-    )
-    r.raise_for_status()
-    return r.json()
-
-
-@tool("Gerar Voucher de Compensação")
-def generate_voucher(customer_id: str, value: float, reason: str) -> dict:
-    """Gera um voucher de desconto como compensação ao cliente.
-
-    Args:
-        customer_id: ID do cliente (ex: CUST-001)
-        value: Valor do voucher em R$
-        reason: Motivo da compensação (ex: 'atraso_entrega', 'produto_com_defeito')
-
-    Returns:
-        dict com voucher_code, value, expires_days
-    """
-    r = httpx.post(
-        f"{ORDERS_API}/vouchers",
-        json={"customer_id": customer_id, "value": value, "reason": reason, "expires_days": 30},
-        timeout=10.0,
-    )
-    r.raise_for_status()
-    return r.json()
-
+# ── RAG / Conteúdo ───────────────────────────────────────────────────────────
 
 @tool("Consultar Direitos do Consumidor")
 def get_consumer_rights(query: str) -> str:
