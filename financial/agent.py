@@ -77,9 +77,28 @@ TASKS: dict[str, dict] = {}
 
 @app.get("/.well-known/agent-card.json")
 def agent_card():
-    """Discovery A2A — retorna o Agent Card."""
+    """Discovery A2A — retorna o Agent Card com metadados de roteamento."""
     card = financial_agent.a2a.to_agent_card(url="http://financial:8002")
-    return card.model_dump()
+    data = card.model_dump()
+    data["x_routing"] = {
+        "triggers": [
+            "Solicitação de reembolso ou estorno de pagamento",
+            "Pedido de voucher ou compensação por má experiência",
+            "Dúvidas sobre direitos do consumidor ou CDC",
+            "Produto com defeito dentro do prazo de garantia",
+            "Escalação do agente logístico (atraso grave ou escalate_financial=true)",
+        ],
+        "required_context": [
+            "order_id",
+            "order_date",
+            "items_total",
+            "freight_paid",
+            "payment_method",
+            "return_reason",
+        ],
+        "escalation_hint": None,
+    }
+    return data
 
 
 @app.post("/")

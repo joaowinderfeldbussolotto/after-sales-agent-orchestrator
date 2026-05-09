@@ -1,4 +1,3 @@
-import asyncio
 import httpx
 from agno.tools import tool
 
@@ -39,21 +38,21 @@ async def fetch_refund_eligibility(order_id: str) -> dict:
 async def delegate(agent_name: str, task: str) -> str:
     """Delega uma tarefa para um agente especializado via protocolo A2A.
 
-    Use logistics-agent para rastreio, ocorrências e frete reverso.
-    Use financial-agent para reembolsos, vouchers e direitos do consumidor.
+    Consulte os critérios "Acionar quando" de cada agente no registro para
+    decidir qual chamar. O nome do agente é exatamente como aparece no registro.
 
     Args:
-        agent_name: Nome do agente. Valores: 'logistics-agent', 'financial-agent'
-        task: Descrição completa da tarefa com TODO o contexto necessário
-              (order_id, tracking_code, datas, valores, motivo, etc.)
+        agent_name: Nome do agente conforme listado no registro de agentes
+        task: Descrição completa da tarefa com todo o contexto necessário
+              conforme "Contexto necessário ao delegar" do agente escolhido
     """
     from .registry import AGENT_REGISTRY
 
     agent_info = AGENT_REGISTRY.get(agent_name)
     if not agent_info:
         return (
-            f"Agente '{agent_name}' não disponível. "
-            f"Agentes online: {list(AGENT_REGISTRY.keys())}"
+            f"Agente '{agent_name}' não encontrado no registro. "
+            f"Agentes disponíveis: {list(AGENT_REGISTRY.keys())}"
         )
 
     base_url = agent_info["base_url"]
@@ -70,7 +69,7 @@ async def delegate(agent_name: str, task: str) -> str:
         },
     }
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=120.0) as client:
         try:
             r = await client.post(f"{base_url}/", json=payload)
             response = r.json()
@@ -84,55 +83,12 @@ async def delegate(agent_name: str, task: str) -> str:
         return f"Erro do agente {agent_name}: {error.get('message', str(error))}"
 
     result = response.get("result", {})
-    status_state = result.get("status", {}).get("state")
+    state = result.get("status", {}).get("state")
 
-    # CrewAI — resposta síncrona, retorna 'completed' diretamente
-    if status_state == "completed":
+    if state == "completed":
         return _extract_artifact_text(result)
 
-    # FastA2A (PydanticAI) — retorna 'working', faz polling
-    task_id = result.get("id")
-    if task_id and status_state in ("submitted", "working"):
-        return await _poll_task(client, base_url, task_id, timeout=55)
-
-    return f"Resposta inesperada de {agent_name}: {response}"
-
-
-async def _poll_task(
-    client: httpx.AsyncClient,
-    base_url: str,
-    task_id: str,
-    timeout: int = 55,
-) -> str:
-    """Poll an A2A task until completed, failed, or timeout."""
-    elapsed = 0.0
-    interval = 1.5
-
-    async with httpx.AsyncClient(timeout=10.0) as poll_client:
-        while elapsed < timeout:
-            await asyncio.sleep(interval)
-            elapsed += interval
-            try:
-                r = await poll_client.post(
-                    f"{base_url}/",
-                    json={
-                        "jsonrpc": "2.0",
-                        "id": "poll-1",
-                        "method": "tasks/get",
-                        "params": {"id": task_id},
-                    },
-                )
-                task = r.json().get("result", {})
-            except Exception:
-                continue
-
-            state = task.get("status", {}).get("state")
-            if state == "completed":
-                return _extract_artifact_text(task)
-            elif state in ("failed", "canceled"):
-                return f"Task {task_id} encerrada com status: {state}"
-
-    return f"Timeout após {timeout}s aguardando resposta da task {task_id}."
+    return f"Resposta inesperada de {agent_name}: estado={state}, resultado={result}"
 
 
 def _extract_artifact_text(task: dict) -> str:
