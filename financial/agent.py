@@ -1,3 +1,4 @@
+import os
 import uuid
 from datetime import datetime
 
@@ -6,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from crewai import Agent, Crew, Task, LLM
 from crewai.a2a import A2AServerConfig
+from crewai_tools import MCPServerAdapter
 from langfuse import Langfuse, get_client
 from openinference.instrumentation.crewai import CrewAIInstrumentor
 
@@ -16,15 +18,25 @@ langfuse = get_client()
 from .tools import (
     check_cdc_eligibility,
     calculate_refund_amount,
-    issue_refund,
-    generate_voucher,
     get_consumer_rights,
 )
+
+MCP_URL = os.getenv("ORDERS_MCP_URL", "http://orders-mcp:8004/mcp")
+
+# Tools MCP que o financeiro pode acessar.
+FINANCIAL_ALLOWED_TOOLS = {
+    "fetch_order",
+    "fetch_refund_eligibility",
+    "issue_refund",
+    "generate_voucher",
+}
 
 # ── LLM via Groq ──────────────────────────────────────────────────────────────
 llm = LLM(model="groq/openai/gpt-oss-20b", temperature=0)
 
-# ── Agent com A2AServerConfig ─────────────────────────────────────────────────
+# ── Agent placeholder — usado APENAS para servir o Agent Card A2A ─────────────
+# O agente real (com tools MCP) é construído dentro de run_financial_task,
+# pois o MCPServerAdapter precisa viver dentro de um context manager.
 financial_agent = Agent(
     role="Agente Financeiro de Pós-Venda",
     goal="Processar reembolsos, gerar vouchers e orientar clientes sobre direitos do consumidor",
@@ -38,12 +50,8 @@ financial_agent = Agent(
     tools=[
         check_cdc_eligibility,
         calculate_refund_amount,
-        issue_refund,
-        generate_voucher,
         get_consumer_rights,
     ],
-    # O campo description é tratado como auto-descrição para o coordenador:
-    # ele é injetado diretamente no system prompt do coordenador em tempo de execução.
     a2a=A2AServerConfig(
         url="http://financial:8002",
         name="financial-agent",
@@ -54,11 +62,11 @@ ACIONAR QUANDO:
 - Pedido de voucher ou compensação por má experiência
 - Dúvidas sobre direitos do consumidor ou CDC
 - Produto com defeito dentro do prazo de garantia
-- Escalação do agente logístico (atraso grave ou escalate_financial=true)
 
-CONTEXTO NECESSÁRIO AO DELEGAR: order_id, order_date, items_total, freight_paid, payment_method, return_reason
+CONTEXTO NECESSÁRIO AO DELEGAR: order_id, return_reason
 
-ESCALAÇÃO: Nenhuma — agente terminal do fluxo financeiro""",
+O agente busca por conta própria todas as demais informações do pedido
+(order_date, items_total, freight_paid, payment_method) via suas tools.""",
         version="1.0.0",
     ),
     verbose=True,
@@ -66,30 +74,54 @@ ESCALAÇÃO: Nenhuma — agente terminal do fluxo financeiro""",
 
 
 def run_financial_task(task_description: str) -> str:
-    """Executa a Crew com uma task dinâmica e retorna o resultado."""
-    task = Task(
-        description=task_description,
-        expected_output=(
-            "JSON com: "
-            "- action_taken: ação realizada "
-            "- cdc_eligible: elegibilidade CDC "
-            "- refund_amount: valor do reembolso (se aplicável) "
-            "- refund_id ou voucher_code: identificador da compensação "
-            "- consumer_rights: direitos aplicáveis "
-            "- message: resposta humanizada para o cliente"
-        ),
-        agent=financial_agent,
-    )
-    crew = Crew(agents=[financial_agent], tasks=[task], verbose=True)
-    with langfuse.start_as_current_observation(as_type="span", name="financial-agent-run"):
-        result = crew.kickoff()
-    langfuse.flush()
-    return str(result)
+    """Executa a Crew com uma task dinâmica e retorna o resultado.
+
+    Constrói um Agent fresco a cada chamada porque o MCPServerAdapter precisa
+    viver dentro de um context manager.
+    """
+    server_params = {"url": MCP_URL, "transport": "streamable-http"}
+
+    with MCPServerAdapter(server_params) as mcp_tools:
+        filtered_mcp = [t for t in mcp_tools if t.name in FINANCIAL_ALLOWED_TOOLS]
+        all_tools = [
+            check_cdc_eligibility,
+            calculate_refund_amount,
+            get_consumer_rights,
+            *filtered_mcp,
+        ]
+
+        agent_with_mcp = Agent(
+            role=financial_agent.role,
+            goal=financial_agent.goal,
+            backstory=financial_agent.backstory,
+            llm=llm,
+            tools=all_tools,
+            verbose=True,
+        )
+
+        task = Task(
+            description=task_description,
+            expected_output=(
+                "JSON com: "
+                "- action_taken: ação realizada "
+                "- cdc_eligible: elegibilidade CDC "
+                "- refund_amount: valor do reembolso (se aplicável) "
+                "- refund_id ou voucher_code: identificador da compensação "
+                "- consumer_rights: direitos aplicáveis "
+                "- message: resposta humanizada para o cliente"
+            ),
+            agent=agent_with_mcp,
+        )
+        crew = Crew(agents=[agent_with_mcp], tasks=[task], verbose=True)
+
+        with langfuse.start_as_current_observation(as_type="span", name="financial-agent-run"):
+            result = crew.kickoff()
+
+        langfuse.flush()
+        return str(result)
 
 
 # ── FastAPI + endpoints A2A ───────────────────────────────────────────────────
-# CrewAI com A2AServerConfig gera o Agent Card mas não provê servidor ASGI pronto.
-# Implementamos os endpoints A2A manualmente. CrewAI é síncrono — retorna direto.
 
 app = FastAPI(title="Financial Agent A2A Server")
 

@@ -3,5 +3,6 @@ langgraph-cli[inmem]
 langchain
 langchain-groq
 langchain-core
+langchain-mcp-adapters
 langfuse
 httpx

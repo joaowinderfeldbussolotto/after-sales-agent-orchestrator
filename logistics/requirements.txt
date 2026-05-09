@@ -1,4 +1,4 @@
-pydantic-ai[groq]
+pydantic-ai[groq,mcp]
 fasta2a
 httpx
 uvicorn[standard]

@@ -1,7 +1,8 @@
 crewai[a2a]
+crewai-tools
+crewai[litellm]
 httpx
 fastapi
 uvicorn[standard]
-crewai[litellm]
 langfuse
 openinference-instrumentation-crewai
