@@ -1,0 +1,111 @@
+version: "3.9"
+
+services:
+
+  # ── Mock Orders API ────────────────────────────────────────────────────────
+  mock-api:
+    build:
+      context: ./mock-api
+      dockerfile: Dockerfile
+    ports:
+      - "8003:8003"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── RAG index builder (init container — exits after building) ──────────────
+  rag-builder:
+    build:
+      context: ./agents/financial
+      dockerfile: Dockerfile
+    command: python -m agents.financial.rag.build_index
+    volumes:
+      - rag-index:/app/agents/financial/rag/faiss_index
+    environment:
+      - PYTHONPATH=/app
+
+  # ── Logistics Agent — PydanticAI A2A Server ────────────────────────────────
+  logistics:
+    build:
+      context: ./agents/logistics
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - LOGFIRE_TOKEN=${LOGFIRE_TOKEN:-}
+    depends_on:
+      mock-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/.well-known/agent-card.json"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  # ── Financial Agent — CrewAI A2A Server ───────────────────────────────────
+  financial:
+    build:
+      context: ./agents/financial
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8002"
+    volumes:
+      - rag-index:/app/agents/financial/rag/faiss_index
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    depends_on:
+      mock-api:
+        condition: service_healthy
+      rag-builder:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/.well-known/agent-card.json"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  # ── Coordinator — Agno AgentOS + AG-UI ────────────────────────────────────
+  coordinator:
+    build:
+      context: ./coordinator
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - coordinator-db:/data
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - LOGISTICS_URL=http://logistics:8001
+      - FINANCIAL_URL=http://financial:8002
+    depends_on:
+      logistics:
+        condition: service_healthy
+      financial:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  # ── Frontend — Agent UI (Next.js) ──────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Browser accesses coordinator via host port mapping, not Docker network
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      coordinator:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  rag-index:       # FAISS index shared between rag-builder and financial
+  coordinator-db:  # SQLite for Agno session storage
