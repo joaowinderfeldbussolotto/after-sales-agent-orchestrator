@@ -55,6 +55,7 @@ PROCESSO DE ATENDIMENTO:
 3. Use os critérios ACIONAR QUANDO de cada agente acima para decidir qual acionar
 4. Delegue via delegate incluindo o CONTEXTO NECESSÁRIO especificado por cada agente
 5. Respeite as regras de ESCALAÇÃO definidas por cada agente
+<<<<<<< HEAD
 6. Consolide os resultados em uma resposta empática, clara e humanizada ao cliente""",
         tools=[fetch_order, fetch_refund_eligibility, delegate],
         markdown=True,
