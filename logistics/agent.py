@@ -2,7 +2,7 @@ from pydantic_ai import Agent
 from . import tools
 
 logistics_agent = Agent(
-    "groq:llama-3.3-70b-versatile",
+    "groq:meta-llama/llama-4-scout-17b-16e-instruct",
     instructions="""Você é o Agente de Logística de um e-commerce brasileiro.
 
 RESPONSABILIDADES:
