@@ -12,7 +12,7 @@ from .tools import (
     calculate_refund_amount,
     issue_refund,
     generate_voucher,
-    search_consumer_rights,
+    get_consumer_rights,
 )
 
 # ── LLM via Groq ──────────────────────────────────────────────────────────────
@@ -34,7 +34,7 @@ financial_agent = Agent(
         calculate_refund_amount,
         issue_refund,
         generate_voucher,
-        search_consumer_rights,
+        get_consumer_rights,
     ],
     a2a=A2AServerConfig(
         url="http://financial:8002",

@@ -15,21 +15,10 @@ services:
       timeout: 3s
       retries: 5
 
-  # ── RAG index builder (init container — exits after building) ──────────────
-  rag-builder:
-    build:
-      context: ./agents/financial
-      dockerfile: Dockerfile
-    command: python -m agents.financial.rag.build_index
-    volumes:
-      - rag-index:/app/agents/financial/rag/faiss_index
-    environment:
-      - PYTHONPATH=/app
-
   # ── Logistics Agent — PydanticAI A2A Server ────────────────────────────────
   logistics:
     build:
-      context: ./agents/logistics
+      context: ./logistics
       dockerfile: Dockerfile
     ports:
       - "8001:8001"
@@ -48,19 +37,15 @@ services:
   # ── Financial Agent — CrewAI A2A Server ───────────────────────────────────
   financial:
     build:
-      context: ./agents/financial
+      context: ./financial
       dockerfile: Dockerfile
     ports:
       - "8002:8002"
-    volumes:
-      - rag-index:/app/agents/financial/rag/faiss_index
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY}
     depends_on:
       mock-api:
         condition: service_healthy
-      rag-builder:
-        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/.well-known/agent-card.json"]
       interval: 10s
@@ -107,5 +92,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  rag-index:       # FAISS index shared between rag-builder and financial
   coordinator-db:  # SQLite for Agno session storage

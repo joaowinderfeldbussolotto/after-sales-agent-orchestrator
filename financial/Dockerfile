@@ -9,10 +9,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Build agents.logistics package structure
-RUN mkdir -p agents/logistics && touch agents/__init__.py
-COPY . agents/logistics/
+RUN mkdir -p financial
+COPY . financial/
 
 ENV PYTHONPATH=/app
 
-CMD ["uvicorn", "agents.logistics.agent:app", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["uvicorn", "financial.agent:app", "--host", "0.0.0.0", "--port", "8002"]

@@ -1,5 +1,6 @@
 import httpx
 from datetime import date
+from pathlib import Path
 from crewai.tools import tool
 
 ORDERS_API = "http://mock-api:8003"
@@ -112,18 +113,12 @@ def generate_voucher(customer_id: str, value: float, reason: str) -> dict:
     return r.json()
 
 
-# ── RAG ──────────────────────────────────────────────────────────────────────
-
-@tool("Buscar Direitos do Consumidor")
-def search_consumer_rights(query: str) -> str:
-    """Busca informações sobre direitos do consumidor na base de conhecimento interna (CDC).
+@tool("Consultar Direitos do Consumidor")
+def get_consumer_rights(query: str) -> str:
+    """Retorna o conteúdo completo do Código de Defesa do Consumidor (CDC) brasileiro.
 
     Args:
-        query: Dúvida ou tema a pesquisar (ex: 'prazo devolução', 'produto com defeito', 'garantia')
-
-    Returns:
-        Trechos relevantes do CDC com os direitos aplicáveis
+        query: Tema consultado (usado apenas para contexto do agente)
     """
-    from .rag.index import search_cdc
-
-    return search_cdc(query)
+    cdc_path = Path(__file__).parent / "cdc.md"
+    return cdc_path.read_text(encoding="utf-8")
