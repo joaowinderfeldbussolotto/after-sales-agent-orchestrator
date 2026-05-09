@@ -25,6 +25,9 @@ services:
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY}
       - LOGFIRE_TOKEN=${LOGFIRE_TOKEN:-}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
     depends_on:
       mock-api:
         condition: service_healthy
@@ -43,6 +46,9 @@ services:
       - "8002:8002"
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
     depends_on:
       mock-api:
         condition: service_healthy
@@ -63,6 +69,9 @@ services:
       - GROQ_API_KEY=${GROQ_API_KEY}
       - LOGISTICS_URL=http://logistics:8001
       - FINANCIAL_URL=http://financial:8002
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
     depends_on:
       logistics:
         condition: service_healthy

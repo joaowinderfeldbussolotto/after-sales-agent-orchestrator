@@ -1,5 +1,10 @@
 from pydantic_ai import Agent
+from pydantic_ai.agent import Agent as PydanticAgent
+from langfuse import Langfuse
 from . import tools
+
+Langfuse()
+PydanticAgent.instrument_all()
 
 logistics_agent = Agent(
     "groq:meta-llama/llama-4-scout-17b-16e-instruct",

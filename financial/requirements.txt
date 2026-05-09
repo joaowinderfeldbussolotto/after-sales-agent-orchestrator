@@ -3,3 +3,5 @@ httpx
 fastapi
 uvicorn[standard]
 crewai[litellm]
+langfuse
+openinference-instrumentation-crewai

@@ -6,6 +6,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from crewai import Agent, Crew, Task, LLM
 from crewai.a2a import A2AServerConfig
+from langfuse import Langfuse, get_client
+from openinference.instrumentation.crewai import CrewAIInstrumentor
+
+Langfuse()
+CrewAIInstrumentor().instrument(skip_dep_check=True)
+langfuse = get_client()
 
 from .tools import (
     check_cdc_eligibility,
@@ -75,7 +81,9 @@ def run_financial_task(task_description: str) -> str:
         agent=financial_agent,
     )
     crew = Crew(agents=[financial_agent], tasks=[task], verbose=True)
-    result = crew.kickoff()
+    with langfuse.start_as_current_observation(as_type="span", name="financial-agent-run"):
+        result = crew.kickoff()
+    langfuse.flush()
     return str(result)
 
 
