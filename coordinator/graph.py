@@ -4,8 +4,7 @@ import os
 
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage
-from langgraph.prebuilt import create_react_agent
-from langgraph.checkpoint.memory import MemorySaver
+from langchain.agents import create_agent
 
 from coordinator.tools import fetch_order, fetch_refund_eligibility, delegate
 from coordinator.registry import discover_agents
@@ -65,12 +64,11 @@ def get_prompt(state) -> list:
 model = ChatGroq(
     model="openai/gpt-oss-120b",
     temperature=0,
-    api_key=os.getenv("GROQ_API_KEY"),
+    api_key=os.getenv("GROQ_API_KEY")
 )
-
-graph = create_react_agent(
+                    
+graph = create_agent(
     model=model,
     tools=[fetch_order, fetch_refund_eligibility, delegate],
-    prompt=get_prompt,
-    checkpointer=MemorySaver(),
+    system_prompt=get_prompt(None)[0],
 )
