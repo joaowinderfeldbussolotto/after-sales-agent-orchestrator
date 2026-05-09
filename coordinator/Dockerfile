@@ -9,12 +9,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Build coordinator package structure
 RUN mkdir -p coordinator
 COPY . coordinator/
 
+# langgraph dev expects langgraph.json at WORKDIR root
+RUN cp coordinator/langgraph.json .
+
 ENV PYTHONPATH=/app
 
-RUN mkdir -p /data
+EXPOSE 2024
 
-CMD ["uvicorn", "coordinator.agent:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["langgraph", "dev", "--host", "0.0.0.0", "--port", "2024", "--no-browser"]

@@ -1,11 +1,11 @@
 import asyncio
 import httpx
-from agno.tools import tool
+from langchain_core.tools import tool
 
 ORDERS_API = "http://mock-api:8003"
 
 
-@tool("Buscar Pedido")
+@tool
 async def fetch_order(order_id: str) -> dict:
     """Busca dados completos de um pedido pelo ID no sistema do e-commerce.
 
@@ -20,7 +20,7 @@ async def fetch_order(order_id: str) -> dict:
         return r.json()
 
 
-@tool("Verificar Elegibilidade de Reembolso")
+@tool
 async def fetch_refund_eligibility(order_id: str) -> dict:
     """Verifica se um pedido está elegível para reembolso ou devolução.
 
@@ -35,7 +35,7 @@ async def fetch_refund_eligibility(order_id: str) -> dict:
         return r.json()
 
 
-@tool("Delegar para Agente Especializado")
+@tool
 async def delegate(agent_name: str, task: str) -> str:
     """Delega uma tarefa para um agente especializado via protocolo A2A.
 
@@ -47,7 +47,7 @@ async def delegate(agent_name: str, task: str) -> str:
         task: Descrição completa da tarefa com todo o contexto necessário
               conforme CONTEXTO NECESSÁRIO especificado pelo agente escolhido
     """
-    from .registry import AGENT_REGISTRY
+    from coordinator.registry import AGENT_REGISTRY
 
     agent_info = AGENT_REGISTRY.get(agent_name)
     if not agent_info:
