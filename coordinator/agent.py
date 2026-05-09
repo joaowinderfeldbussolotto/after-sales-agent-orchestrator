@@ -12,32 +12,7 @@ from agno.db.sqlite import SqliteDb
 from .tools import fetch_order, fetch_refund_eligibility, delegate
 from .registry import discover_agents, AGENT_REGISTRY
 
-# ── Startup: dynamic agent discovery ──────────────────────────────────────────
-_registry_prompt: str = ""
-
-
-async def _init_registry():
-    global _registry_prompt
-    _registry_prompt = await discover_agents()
-    print("Agent Registry loaded:")
-    print(_registry_prompt)
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    await _init_registry()
-    yield
-
-
-# ── Agno Agent ────────────────────────────────────────────────────────────────
-def build_coordinator() -> Agent:
-    registry_snapshot = _registry_prompt
-
-    return Agent(
-        name="coordinator",
-        model=Groq(id="openai/gpt-oss-120b"),
-        db=SqliteDb(db_file="/data/coordinator.db"),
-        instructions=f"""Você é o Coordenador de Pós-Venda de um e-commerce brasileiro.
+_INSTRUCTIONS_TEMPLATE = """Você é o Coordenador de Pós-Venda de um e-commerce brasileiro.
 
 MISSÃO: Atender clientes com demandas pós-venda, buscar informações dos pedidos
 e acionar os agentes especializados corretos via protocolo A2A.
@@ -47,7 +22,7 @@ CAPACIDADES PRÓPRIAS:
 - Verificar elegibilidade de reembolso (fetch_refund_eligibility)
 - Responder dúvidas simples que não requeiram especialista
 
-{registry_snapshot}
+{registry}
 
 PROCESSO DE ATENDIMENTO:
 1. Identifique o order_id na mensagem do cliente
@@ -55,18 +30,34 @@ PROCESSO DE ATENDIMENTO:
 3. Use os critérios ACIONAR QUANDO de cada agente acima para decidir qual acionar
 4. Delegue via delegate incluindo o CONTEXTO NECESSÁRIO especificado por cada agente
 5. Respeite as regras de ESCALAÇÃO definidas por cada agente
-6. Consolide os resultados em uma resposta empática, clara e humanizada ao cliente""",
-        tools=[fetch_order, fetch_refund_eligibility, delegate],
-        show_tool_calls=True,
-        markdown=True,
-        add_history_to_context=True,
-        num_history_runs=5,
-    )
+6. Consolide os resultados em uma resposta empática, clara e humanizada ao cliente"""
+
+
+# ── Agno Agent — built at module load; instructions patched at lifespan ───────
+coordinator_agent = Agent(
+    name="coordinator",
+    model=Groq(id="openai/gpt-oss-120b"),
+    db=SqliteDb(db_file="/data/coordinator.db"),
+    instructions=_INSTRUCTIONS_TEMPLATE.format(registry="## Carregando registro de agentes..."),
+    tools=[fetch_order, fetch_refund_eligibility, delegate],
+    show_tool_calls=True,
+    markdown=True,
+    add_history_to_context=True,
+    num_history_runs=5,
+)
+
+
+# ── Startup: discover agents and inject their self-descriptions into prompt ───
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    registry_prompt = await discover_agents()
+    coordinator_agent.instructions = _INSTRUCTIONS_TEMPLATE.format(registry=registry_prompt)
+    print("=== Agent Registry loaded ===")
+    print(registry_prompt)
+    yield
 
 
 # ── AgentOS + AGUI ────────────────────────────────────────────────────────────
-coordinator_agent = build_coordinator()
-
 agent_os = AgentOS(
     agents=[coordinator_agent],
     interfaces=[AGUI(agent=coordinator_agent)],
