@@ -1,38 +1,5 @@
-import asyncio
 import httpx
 from langchain_core.tools import tool
-
-ORDERS_API = "http://mock-api:8003"
-
-
-@tool
-async def fetch_order(order_id: str) -> dict:
-    """Busca dados completos de um pedido pelo ID no sistema do e-commerce.
-
-    Args:
-        order_id: ID do pedido (ex: PV-2026-00142)
-    """
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.get(f"{ORDERS_API}/orders/{order_id}")
-        if r.status_code == 404:
-            return {"error": f"Pedido {order_id} não encontrado"}
-        r.raise_for_status()
-        return r.json()
-
-
-@tool
-async def fetch_refund_eligibility(order_id: str) -> dict:
-    """Verifica se um pedido está elegível para reembolso ou devolução.
-
-    Args:
-        order_id: ID do pedido
-    """
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.get(f"{ORDERS_API}/orders/{order_id}/refund-eligibility")
-        if r.status_code == 404:
-            return {"error": f"Pedido {order_id} não encontrado"}
-        r.raise_for_status()
-        return r.json()
 
 
 @tool
@@ -114,6 +81,8 @@ async def delegate(agent_name: str, task: str) -> str:
 
 async def _poll_task(base_url: str, task_id: str, timeout: int = 55) -> str:
     """Poll a JSON-RPC A2A task until completed, failed, or timeout."""
+    import asyncio
+
     elapsed = 0.0
     interval = 1.5
 

@@ -1,7 +1,4 @@
-import httpx
 from datetime import date
-
-ORDERS_API = "http://mock-api:8003"
 
 
 # ── MOCK MCPs ────────────────────────────────────────────────────────────────
@@ -86,40 +83,6 @@ def validate_address(cep: str) -> dict:
         {"logradouro": "Rua Simulada", "bairro": "Bairro Exemplo", "cidade": "São Paulo", "uf": "SP"},
     )
     return {"cep": cep_clean, "valid": True, **data}
-
-
-# ── EFEITOS COLATERAIS (Mock API) ────────────────────────────────────────────
-
-def open_incident(order_id: str, reason: str) -> dict:
-    """Abre uma ocorrência logística para um pedido na transportadora.
-
-    Args:
-        order_id: ID do pedido (ex: PV-2026-00142)
-        reason: Motivo da ocorrência (ex: 'atraso', 'extravio', 'avaria')
-    """
-    r = httpx.post(
-        f"{ORDERS_API}/orders/{order_id}/incident",
-        json={"reason": reason},
-        timeout=10.0,
-    )
-    r.raise_for_status()
-    return r.json()
-
-
-def update_order_status(order_id: str, status: str) -> dict:
-    """Atualiza o status de um pedido no sistema.
-
-    Args:
-        order_id: ID do pedido
-        status: Novo status (ex: 'incident_opened', 'returning', 'lost')
-    """
-    r = httpx.put(
-        f"{ORDERS_API}/orders/{order_id}/status",
-        json={"status": status},
-        timeout=10.0,
-    )
-    r.raise_for_status()
-    return r.json()
 
 
 # ── DETERMINÍSTICAS ──────────────────────────────────────────────────────────

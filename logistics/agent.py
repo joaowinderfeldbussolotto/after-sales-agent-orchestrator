@@ -1,5 +1,19 @@
+import os
+
 from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStreamableHTTP
+from pydantic_ai.toolsets import FilteredToolset
+
 from . import tools
+
+_LOGISTICS_MCP_TOOLS = {"open_incident", "update_order_status"}
+
+_orders_mcp = FilteredToolset(
+    MCPServerStreamableHTTP(
+        os.getenv("ORDERS_MCP_URL", "http://orders-mcp:8004/mcp")
+    ),
+    lambda _ctx, tool_def: tool_def.name in _LOGISTICS_MCP_TOOLS,
+)
 
 logistics_agent = Agent(
     "groq:meta-llama/llama-4-scout-17b-16e-instruct",
@@ -26,12 +40,11 @@ FORMATO DE RESPOSTA:
   "tracking_events": [...],
   "message": "Mensagem humanizada para o cliente"
 }""",
+    toolsets=[_orders_mcp],
     tools=[
         tools.track_package,
         tools.quote_reverse_shipping,
         tools.validate_address,
-        tools.open_incident,
-        tools.update_order_status,
         tools.calculate_delay_days,
     ],
 )

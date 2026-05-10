@@ -45,8 +45,11 @@ services:
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY}
       - LOGFIRE_TOKEN=${LOGFIRE_TOKEN:-}
+      - ORDERS_MCP_URL=http://orders-mcp:8004/mcp
     depends_on:
       mock-api:
+        condition: service_healthy
+      orders-mcp:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/.well-known/agent-card.json"]
@@ -86,10 +89,13 @@ services:
       - GROQ_API_KEY=${GROQ_API_KEY}
       - LOGISTICS_URL=http://logistics:8001
       - FINANCIAL_URL=http://financial:8002
+      - ORDERS_MCP_URL=http://orders-mcp:8004/mcp
     depends_on:
       logistics:
         condition: service_healthy
       financial:
+        condition: service_healthy
+      orders-mcp:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:2024/ok"]
