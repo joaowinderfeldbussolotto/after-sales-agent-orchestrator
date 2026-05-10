@@ -15,8 +15,8 @@ AGENT_CONFIGS = [
     {
         "name": "financial-agent",
         "base_url": os.getenv("FINANCIAL_URL", "http://financial:8002"),
-        "card_path": "/.well-known/agent-card.json",
-        "protocol": "json-rpc",
+        "card_path": "/a2a/agents/financial-agent/.well-known/agent-card.json",
+        "protocol": "agno-rest",
     },
 ]
 

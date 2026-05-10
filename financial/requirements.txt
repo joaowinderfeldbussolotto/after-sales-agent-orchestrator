@@ -1,5 +1,4 @@
-crewai[a2a]
+agno
+groq
+mcp
 httpx
-fastapi
-uvicorn[standard]
-crewai[litellm]

@@ -57,18 +57,40 @@ async def delegate(agent_name: str, task: str) -> str:
         )
 
     base_url = agent_info["base_url"]
+    protocol = agent_info.get("protocol", "json-rpc")
+    message = {
+        "kind": "message",
+        "role": "user",
+        "messageId": f"msg-{id(task)}",
+        "parts": [{"kind": "text", "text": task}],
+    }
+
+    if protocol == "agno-rest":
+        # Agno AgentOS REST A2A: POST directly, Task object returned without JSON-RPC wrapper
+        endpoint = f"{base_url}/a2a/agents/{agent_name}/v1/message:send"
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            try:
+                r = await client.post(endpoint, json={"message": message})
+                task_result = r.json()
+            except httpx.TimeoutException:
+                return f"Timeout ao aguardar resposta de {agent_name}."
+            except Exception as e:
+                return f"Erro de comunicação com {agent_name}: {str(e)}"
+
+        state = task_result.get("status", {}).get("state")
+        if state == "completed":
+            return _extract_artifact_text(task_result)
+        task_id = task_result.get("id")
+        if task_id and state in ("submitted", "working"):
+            return await _poll_task_rest(base_url, agent_name, task_id, timeout=110)
+        return f"Resposta inesperada de {agent_name}: {task_result}"
+
+    # JSON-RPC (FastA2A / PydanticAI)
     payload = {
         "jsonrpc": "2.0",
         "id": "delegate-1",
         "method": "message/send",
-        "params": {
-            "message": {
-            "kind": "message",
-                "role": "user",
-                "messageId": f"msg-{id(task)}",
-                "parts": [{"kind": "text", "text": task}],
-            }
-        },
+        "params": {"message": message},
     }
 
     async with httpx.AsyncClient(timeout=60.0) as client:
@@ -87,7 +109,6 @@ async def delegate(agent_name: str, task: str) -> str:
     result = response.get("result", {})
     status_state = result.get("status", {}).get("state")
 
-    # CrewAI — resposta síncrona, retorna 'completed' diretamente
     if status_state == "completed":
         return _extract_artifact_text(result)
 
@@ -100,7 +121,7 @@ async def delegate(agent_name: str, task: str) -> str:
 
 
 async def _poll_task(base_url: str, task_id: str, timeout: int = 55) -> str:
-    """Poll an A2A task until completed, failed, or timeout."""
+    """Poll a JSON-RPC A2A task until completed, failed, or timeout."""
     elapsed = 0.0
     interval = 1.5
 
@@ -119,6 +140,31 @@ async def _poll_task(base_url: str, task_id: str, timeout: int = 55) -> str:
                     },
                 )
                 task = r.json().get("result", {})
+            except Exception:
+                continue
+
+            state = task.get("status", {}).get("state")
+            if state == "completed":
+                return _extract_artifact_text(task)
+            elif state in ("failed", "canceled"):
+                return f"Task {task_id} encerrada com status: {state}"
+
+    return f"Timeout após {timeout}s aguardando resposta da task {task_id}."
+
+
+async def _poll_task_rest(base_url: str, agent_name: str, task_id: str, timeout: int = 110) -> str:
+    """Poll an Agno REST A2A task until completed, failed, or timeout."""
+    elapsed = 0.0
+    interval = 1.5
+    endpoint = f"{base_url}/a2a/agents/{agent_name}/v1/tasks/{task_id}"
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        while elapsed < timeout:
+            await asyncio.sleep(interval)
+            elapsed += interval
+            try:
+                r = await client.get(endpoint)
+                task = r.json()
             except Exception:
                 continue
 

@@ -15,6 +15,26 @@ services:
       timeout: 3s
       retries: 5
 
+  # ── Orders MCP Server (FastMCP) ───────────────────────────────────────────
+  # Centraliza acesso à Orders API. Agents consomem via MCPTools.
+  orders-mcp:
+    build:
+      context: ./orders-mcp
+      dockerfile: Dockerfile
+    ports:
+      - "8004:8004"
+    environment:
+      - ORDERS_API_URL=http://mock-api:8003
+    depends_on:
+      mock-api:
+        condition: service_healthy
+    healthcheck:
+      # MCP endpoint só responde a POST/streaming; sem -f para aceitar 4xx
+      test: ["CMD-SHELL", "curl -sS --max-time 3 -o /dev/null http://localhost:8004/mcp || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
   # ── Logistics Agent — PydanticAI A2A Server ────────────────────────────────
   logistics:
     build:
@@ -34,7 +54,7 @@ services:
       timeout: 5s
       retries: 6
 
-  # ── Financial Agent — CrewAI A2A Server ───────────────────────────────────
+  # ── Financial Agent — Agno A2A Server ────────────────────────────────────
   financial:
     build:
       context: ./financial
@@ -43,11 +63,14 @@ services:
       - "8002:8002"
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY}
+      - ORDERS_MCP_URL=http://orders-mcp:8004/mcp
     depends_on:
       mock-api:
         condition: service_healthy
+      orders-mcp:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8002/.well-known/agent-card.json"]
+      test: ["CMD", "curl", "-f", "http://localhost:8002/a2a/agents/financial-agent/.well-known/agent-card.json"]
       interval: 10s
       timeout: 5s
       retries: 6
