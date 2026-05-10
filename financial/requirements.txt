@@ -2,3 +2,5 @@ agno
 groq
 mcp
 httpx
+fastapi
+a2a-sdk<0.40

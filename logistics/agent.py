@@ -1,6 +1,12 @@
 import os
 
 from pydantic_ai import Agent
+from pydantic_ai.agent import Agent as PydanticAgent
+from langfuse import Langfuse
+from . import tools
+
+Langfuse()
+PydanticAgent.instrument_all()
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 from pydantic_ai.toolsets import FilteredToolset
 
@@ -17,6 +23,7 @@ _orders_mcp = FilteredToolset(
 
 logistics_agent = Agent(
     "groq:meta-llama/llama-4-scout-17b-16e-instruct",
+    name="Logistics Agent",
     instructions="""Você é o Agente de Logística de um e-commerce brasileiro.
 
 RESPONSABILIDADES:
@@ -47,7 +54,10 @@ FORMATO DE RESPOSTA:
         tools.validate_address,
         tools.calculate_delay_days,
     ],
+    instrument=True,
 )
+
+
 
 app = logistics_agent.to_a2a(
     name="logistics-agent",

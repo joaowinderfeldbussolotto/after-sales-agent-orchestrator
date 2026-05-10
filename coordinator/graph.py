@@ -5,10 +5,15 @@ import os
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage
 from langchain.agents import create_agent
+from langfuse import Langfuse
+from langfuse.langchain import CallbackHandler
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from coordinator.tools import delegate
 from coordinator.registry import discover_agents
+
+Langfuse()
+langfuse_handler = CallbackHandler()
 
 _INSTRUCTIONS_TEMPLATE = """Você é o Coordenador de Pós-Venda de um e-commerce brasileiro.
 
@@ -104,4 +109,7 @@ graph = create_agent(
     model=model,
     tools=[*_mcp_tools, delegate],
     system_prompt=get_prompt(None)[0],
-)
+).with_config({
+    "callbacks": [langfuse_handler],
+    "metadata": {"langfuse_tags": ["coordinator", "postvenda-ai"]},
+})

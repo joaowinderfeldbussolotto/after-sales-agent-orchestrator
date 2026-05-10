@@ -45,6 +45,9 @@ services:
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY}
       - LOGFIRE_TOKEN=${LOGFIRE_TOKEN:-}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
       - ORDERS_MCP_URL=http://orders-mcp:8004/mcp
     depends_on:
       mock-api:
@@ -66,6 +69,9 @@ services:
       - "8002:8002"
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
       - ORDERS_MCP_URL=http://orders-mcp:8004/mcp
     depends_on:
       mock-api:
@@ -89,6 +95,9 @@ services:
       - GROQ_API_KEY=${GROQ_API_KEY}
       - LOGISTICS_URL=http://logistics:8001
       - FINANCIAL_URL=http://financial:8002
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
       - ORDERS_MCP_URL=http://orders-mcp:8004/mcp
     depends_on:
       logistics:
