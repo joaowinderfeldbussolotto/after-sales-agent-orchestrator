@@ -1,13 +1,45 @@
+import base64
 import os
 
 from agno.agent import Agent
 from agno.models.groq import Groq
 from agno.os import AgentOS
 from agno.tools.mcp import MCPTools
+from openinference.instrumentation.agno import AgnoInstrumentor
+from opentelemetry import trace as trace_api
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
 from .tools import check_cdc_eligibility, calculate_refund_amount, get_consumer_rights
 
 MCP_URL = os.getenv("ORDERS_MCP_URL", "http://orders-mcp:8004/mcp")
+
+
+def _configure_langfuse_tracing() -> None:
+    public_key = os.getenv("LANGFUSE_PUBLIC_KEY")
+    secret_key = os.getenv("LANGFUSE_SECRET_KEY")
+    if not public_key or not secret_key:
+        return
+
+    langfuse_auth = base64.b64encode(f"{public_key}:{secret_key}".encode()).decode()
+    os.environ.setdefault(
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        os.getenv("LANGFUSE_OTLP_ENDPOINT", "https://us.cloud.langfuse.com/api/public/otel"),
+    )
+    os.environ.setdefault(
+        "OTEL_EXPORTER_OTLP_HEADERS",
+        f"Authorization=Basic {langfuse_auth}",
+    )
+
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(SimpleSpanProcessor(OTLPSpanExporter()))
+    trace_api.set_tracer_provider(tracer_provider=tracer_provider)
+
+    AgnoInstrumentor().instrument()
+
+
+_configure_langfuse_tracing()
 
 financial_agent = Agent(
     id="financial-agent",
@@ -26,44 +58,7 @@ ACIONAR QUANDO:
 - Pedido de voucher ou compensação por má experiência
 - Dúvidas sobre direitos do consumidor ou CDC
 - Produto com defeito dentro do prazo de garantia
-- Escalação do agente logístico (atraso grave ou escalate_financial=true)
-
-CONTEXTO NECESSÁRIO AO DELEGAR: order_id, order_date, items_total, freight_paid, payment_method, return_reason
-
-ESCALAÇÃO: Nenhuma — agente terminal do fluxo financeiro""",
-        version="1.0.0",
-    ),
-    verbose=True,
-)
-
-
-def run_financial_task(task_description: str) -> str:
-    """Executa a Crew com uma task dinâmica e retorna o resultado."""
-    task = Task(
-        description=task_description,
-        expected_output=(
-            "JSON com: "
-            "- action_taken: ação realizada "
-            "- cdc_eligible: elegibilidade CDC "
-            "- refund_amount: valor do reembolso (se aplicável) "
-            "- refund_id ou voucher_code: identificador da compensação "
-            "- consumer_rights: direitos aplicáveis "
-            "- message: resposta humanizada para o cliente"
-        ),
-        agent=financial_agent,
-    )
-    crew = Crew(agents=[financial_agent], tasks=[task], verbose=True)
-    with langfuse.start_as_current_observation(as_type="span", name="financial-agent-run"):
-        result = crew.kickoff()
-    langfuse.flush()
-    return str(result)
-
-
-# ── FastAPI + endpoints A2A ───────────────────────────────────────────────────
-# CrewAI com A2AServerConfig gera o Agent Card mas não provê servidor ASGI pronto.
-# Implementamos os endpoints A2A manualmente. CrewAI é síncrono — retorna direto.
-
-app = FastAPI(title="Financial Agent A2A Server")
+- Quando o cliente está insatisfeito com atrasos na entrega e solicita compensação pela demora
 
 CONTEXTO NECESSÁRIO AO DELEGAR: order_id, return_reason
 
