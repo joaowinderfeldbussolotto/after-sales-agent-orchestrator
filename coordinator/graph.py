@@ -7,8 +7,9 @@ from langchain_core.messages import SystemMessage
 from langchain.agents import create_agent
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
+from langchain_mcp_adapters.client import MultiServerMCPClient
 
-from coordinator.tools import fetch_order, fetch_refund_eligibility, delegate
+from coordinator.tools import delegate
 from coordinator.registry import discover_agents
 
 Langfuse()
@@ -21,7 +22,6 @@ e acionar os agentes especializados corretos via protocolo A2A.
 
 CAPACIDADES PRÓPRIAS:
 - Consultar dados completos de pedidos (fetch_order)
-- Verificar elegibilidade de reembolso (fetch_refund_eligibility)
 - Responder dúvidas simples que não requeiram especialista
 
 {registry}
@@ -35,7 +35,6 @@ PROCESSO DE ATENDIMENTO:
 6. Consolide os resultados em uma resposta empática, clara e humanizada ao cliente"""
 
 # ── Registry: carregado na importação do módulo pelo LangGraph Server ─────────
-# Usa thread dedicada para evitar conflito com event loops do servidor.
 _registry_prompt: str = ""
 
 
@@ -60,6 +59,40 @@ def _load_registry() -> str:
 _registry_prompt = _load_registry()
 
 
+# ── MCP Tools: fetch_order carregada do orders-mcp via langchain-mcp-adapters ─
+_MCP_TOOL_NAMES = {"fetch_order"}
+
+
+def _load_mcp_tools() -> list:
+    result: dict = {}
+
+    def _run():
+        async def _async():
+            client = MultiServerMCPClient({
+                "orders": {
+                    "transport": "http",
+                    "url": os.getenv("ORDERS_MCP_URL", "http://orders-mcp:8004/mcp"),
+                }
+            })
+            all_tools = await client.get_tools()
+            result["tools"] = [t for t in all_tools if t.name in _MCP_TOOL_NAMES]
+
+        asyncio.run(_async())
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=30)
+    loaded = result.get("tools", [])
+    if loaded:
+        print(f"=== MCP Tools loaded: {[t.name for t in loaded]} ===")
+    else:
+        print("WARNING: MCP Tools empty — orders-mcp may be unreachable at startup")
+    return loaded
+
+
+_mcp_tools = _load_mcp_tools()
+
+
 # ── Prompt dinâmico: injeta o registry em cada invocação ─────────────────────
 def get_prompt(state) -> list:
     return [SystemMessage(content=_INSTRUCTIONS_TEMPLATE.format(registry=_registry_prompt))]
@@ -71,10 +104,10 @@ model = ChatGroq(
     temperature=0,
     api_key=os.getenv("GROQ_API_KEY")
 )
-                    
+
 graph = create_agent(
     model=model,
-    tools=[fetch_order, fetch_refund_eligibility, delegate],
+    tools=[*_mcp_tools, delegate],
     system_prompt=get_prompt(None)[0],
 ).with_config({
     "callbacks": [langfuse_handler],

@@ -1,38 +1,5 @@
-import asyncio
 import httpx
 from langchain_core.tools import tool
-
-ORDERS_API = "http://mock-api:8003"
-
-
-@tool
-async def fetch_order(order_id: str) -> dict:
-    """Busca dados completos de um pedido pelo ID no sistema do e-commerce.
-
-    Args:
-        order_id: ID do pedido (ex: PV-2026-00142)
-    """
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.get(f"{ORDERS_API}/orders/{order_id}")
-        if r.status_code == 404:
-            return {"error": f"Pedido {order_id} não encontrado"}
-        r.raise_for_status()
-        return r.json()
-
-
-@tool
-async def fetch_refund_eligibility(order_id: str) -> dict:
-    """Verifica se um pedido está elegível para reembolso ou devolução.
-
-    Args:
-        order_id: ID do pedido
-    """
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.get(f"{ORDERS_API}/orders/{order_id}/refund-eligibility")
-        if r.status_code == 404:
-            return {"error": f"Pedido {order_id} não encontrado"}
-        r.raise_for_status()
-        return r.json()
 
 
 @tool
@@ -57,18 +24,32 @@ async def delegate(agent_name: str, task: str) -> str:
         )
 
     base_url = agent_info["base_url"]
+    protocol = agent_info.get("protocol", "json-rpc")
+    message = {
+        "kind": "message",
+        "role": "user",
+        "messageId": f"msg-{id(task)}",
+        "parts": [{"kind": "text", "text": task}],
+    }
+
+    if protocol == "agno-rest":
+        # Agno message:send é síncrono — aguarda execução e retorna Task completed
+        endpoint = f"{base_url}/a2a/agents/{agent_name}/v1/message:send"
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            try:
+                r = await client.post(endpoint, json={"message": message})
+                return _extract_artifact_text(r.json())
+            except httpx.TimeoutException:
+                return f"Timeout ao aguardar resposta de {agent_name}."
+            except Exception as e:
+                return f"Erro de comunicação com {agent_name}: {str(e)}"
+
+    # JSON-RPC (FastA2A / PydanticAI)
     payload = {
         "jsonrpc": "2.0",
         "id": "delegate-1",
         "method": "message/send",
-        "params": {
-            "message": {
-            "kind": "message",
-                "role": "user",
-                "messageId": f"msg-{id(task)}",
-                "parts": [{"kind": "text", "text": task}],
-            }
-        },
+        "params": {"message": message},
     }
 
     async with httpx.AsyncClient(timeout=60.0) as client:
@@ -87,7 +68,6 @@ async def delegate(agent_name: str, task: str) -> str:
     result = response.get("result", {})
     status_state = result.get("status", {}).get("state")
 
-    # CrewAI — resposta síncrona, retorna 'completed' diretamente
     if status_state == "completed":
         return _extract_artifact_text(result)
 
@@ -100,7 +80,9 @@ async def delegate(agent_name: str, task: str) -> str:
 
 
 async def _poll_task(base_url: str, task_id: str, timeout: int = 55) -> str:
-    """Poll an A2A task until completed, failed, or timeout."""
+    """Poll a JSON-RPC A2A task until completed, failed, or timeout."""
+    import asyncio
+
     elapsed = 0.0
     interval = 1.5
 

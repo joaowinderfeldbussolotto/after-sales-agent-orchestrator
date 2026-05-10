@@ -1,53 +1,25 @@
-import uuid
-from datetime import datetime
+import os
 
-import uvicorn
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-from crewai import Agent, Crew, Task, LLM
-from crewai.a2a import A2AServerConfig
-from langfuse import Langfuse, get_client
-from openinference.instrumentation.crewai import CrewAIInstrumentor
+from agno.agent import Agent
+from agno.models.groq import Groq
+from agno.os import AgentOS
+from agno.tools.mcp import MCPTools
 
-Langfuse()
-CrewAIInstrumentor().instrument(skip_dep_check=True)
-langfuse = get_client()
+from .tools import check_cdc_eligibility, calculate_refund_amount, get_consumer_rights
 
-from .tools import (
-    check_cdc_eligibility,
-    calculate_refund_amount,
-    issue_refund,
-    generate_voucher,
-    get_consumer_rights,
-)
+MCP_URL = os.getenv("ORDERS_MCP_URL", "http://orders-mcp:8004/mcp")
 
-# ── LLM via Groq ──────────────────────────────────────────────────────────────
-llm = LLM(model="groq/openai/gpt-oss-20b", temperature=0)
-
-# ── Agent com A2AServerConfig ─────────────────────────────────────────────────
 financial_agent = Agent(
-    role="Agente Financeiro de Pós-Venda",
-    goal="Processar reembolsos, gerar vouchers e orientar clientes sobre direitos do consumidor",
-    backstory=(
-        "Você é especialista em direito do consumidor brasileiro e processos "
-        "financeiros de e-commerce. Conhece o CDC profundamente e sabe calcular "
-        "reembolsos com precisão. Sempre verifica elegibilidade antes de processar "
-        "qualquer reembolso."
-    ),
-    llm=llm,
+    id="financial-agent",
+    name="financial-agent",
+    model=Groq(id="openai/gpt-oss-20b"),
     tools=[
         check_cdc_eligibility,
         calculate_refund_amount,
-        issue_refund,
-        generate_voucher,
         get_consumer_rights,
+        MCPTools(transport="streamable-http", url=MCP_URL),
     ],
-    # O campo description é tratado como auto-descrição para o coordenador:
-    # ele é injetado diretamente no system prompt do coordenador em tempo de execução.
-    a2a=A2AServerConfig(
-        url="http://financial:8002",
-        name="financial-agent",
-        description="""Especialista em reembolsos, vouchers e direitos do consumidor (CDC).
+    description="""Especialista em reembolsos, vouchers e direitos do consumidor (CDC).
 
 ACIONAR QUANDO:
 - Solicitação de reembolso ou estorno de pagamento
@@ -93,63 +65,27 @@ def run_financial_task(task_description: str) -> str:
 
 app = FastAPI(title="Financial Agent A2A Server")
 
-TASKS: dict[str, dict] = {}
+CONTEXTO NECESSÁRIO AO DELEGAR: order_id, return_reason
 
+O agente busca por conta própria todas as demais informações do pedido
+(order_date, items_total, freight_paid, payment_method) via suas tools.""",
+    instructions="""Você é especialista em direito do consumidor brasileiro e processos
+financeiros de e-commerce. Conhece o CDC profundamente e sabe calcular
+reembolsos com precisão. Sempre verifique elegibilidade antes de processar
+qualquer reembolso.
 
-@app.get("/.well-known/agent-card.json")
-def agent_card():
-    """Discovery A2A — retorna o Agent Card."""
-    card = financial_agent.a2a
-    return card.model_dump()
+Use apenas as ferramentas relevantes ao domínio financeiro:
+- Para consultar pedido: fetch_order, fetch_refund_eligibility
+- Para processar compensação: issue_refund, generate_voucher
+- Para avaliar elegibilidade: check_cdc_eligibility, calculate_refund_amount
+- Para orientar sobre direitos: get_consumer_rights
 
+Responda sempre em português com uma mensagem humanizada ao cliente.""",
+)
 
-@app.post("/")
-async def handle_a2a(request: Request):
-    """Endpoint JSON-RPC para protocolo A2A."""
-    body = await request.json()
-    method = body.get("method")
-    params = body.get("params", {})
-    rpc_id = body.get("id", "1")
+agent_os = AgentOS(
+    agents=[financial_agent],
+    a2a_interface=True,
+)
 
-    if method == "message/send":
-        message = params.get("message", {})
-        parts = message.get("parts", [])
-        task_text = " ".join(p.get("text", "") for p in parts if p.get("kind") == "text")
-
-        result = run_financial_task(task_text)
-        task_id = str(uuid.uuid4())
-
-        return JSONResponse({
-            "jsonrpc": "2.0",
-            "id": rpc_id,
-            "result": {
-                "id": task_id,
-                "contextId": message.get("contextId", str(uuid.uuid4())),
-                "status": {"state": "completed", "timestamp": datetime.utcnow().isoformat()},
-                "artifacts": [{
-                    "artifactId": str(uuid.uuid4()),
-                    "parts": [{"kind": "text", "text": result}],
-                }],
-            },
-        })
-
-    elif method == "tasks/get":
-        task_id = params.get("id")
-        task = TASKS.get(task_id)
-        if not task:
-            return JSONResponse({
-                "jsonrpc": "2.0",
-                "id": rpc_id,
-                "error": {"code": -32001, "message": "Task not found"},
-            })
-        return JSONResponse({"jsonrpc": "2.0", "id": rpc_id, "result": task})
-
-    return JSONResponse({
-        "jsonrpc": "2.0",
-        "id": rpc_id,
-        "error": {"code": -32601, "message": f"Method '{method}' not found"},
-    })
-
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8002)
+app = agent_os.get_app()

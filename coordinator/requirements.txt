@@ -4,4 +4,5 @@ langchain
 langchain-groq
 langchain-core
 langfuse
+langchain-mcp-adapters
 httpx
