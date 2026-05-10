@@ -33,12 +33,18 @@ async def delegate(agent_name: str, task: str) -> str:
     }
 
     if protocol == "agno-rest":
-        # Agno message:send é síncrono — aguarda execução e retorna Task completed
+        # Agno's SendMessageRequest expects JSON-RPC-like body with id + params
+        # Response is {"id": ..., "result": {"status": ..., "history": [...], "artifacts": [...]}}
         endpoint = f"{base_url}/a2a/agents/{agent_name}/v1/message:send"
+        payload = {
+            "jsonrpc": "2.0",
+            "id": f"req-{id(task)}",
+            "params": {"message": message},
+        }
         async with httpx.AsyncClient(timeout=120.0) as client:
             try:
-                r = await client.post(endpoint, json={"message": message})
-                return _extract_artifact_text(r.json())
+                r = await client.post(endpoint, json=payload)
+                return _extract_agno_text(r.json())
             except httpx.TimeoutException:
                 return f"Timeout ao aguardar resposta de {agent_name}."
             except Exception as e:
@@ -114,7 +120,7 @@ async def _poll_task(base_url: str, task_id: str, timeout: int = 55) -> str:
 
 
 def _extract_artifact_text(task: dict) -> str:
-    """Extract text from the first artifact of an A2A task result."""
+    """Extract text from the first artifact of an A2A (JSON-RPC) task result."""
     artifacts = task.get("artifacts", [])
     if not artifacts:
         return "Agente não retornou resultado."
@@ -123,3 +129,29 @@ def _extract_artifact_text(task: dict) -> str:
         if part.get("kind") == "text" and part.get("text"):
             return part["text"]
     return str(parts[0]) if parts else "Artifact sem conteúdo."
+
+
+def _extract_agno_text(response: dict) -> str:
+    """Extract text from an Agno A2A REST response.
+
+    Agno wraps the Task inside {"id": ..., "result": {...}}.
+    Text lives in result.artifacts[].parts[] or result.history[].parts[].
+    """
+    result = response.get("result", response)
+
+    # artifacts have priority (structured output)
+    for artifact in result.get("artifacts") or []:
+        for part in artifact.get("parts", []):
+            text = part.get("text") or (part.get("root") or {}).get("text")
+            if text:
+                return text
+
+    # fall back to agent history message
+    for msg in result.get("history", []):
+        if msg.get("role") in ("agent", "model"):
+            for part in msg.get("parts", []):
+                text = part.get("text") or (part.get("root") or {}).get("text")
+                if text:
+                    return text
+
+    return "Agente não retornou resultado."
