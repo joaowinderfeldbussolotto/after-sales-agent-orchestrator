@@ -1,0 +1,10 @@
+agno
+groq
+mcp
+httpx
+fastapi
+a2a-sdk<0.40
+langfuse
+opentelemetry-sdk
+opentelemetry-exporter-otlp
+openinference-instrumentation-agno

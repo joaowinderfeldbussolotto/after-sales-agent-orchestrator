@@ -1,0 +1,5 @@
+pydantic-ai[groq]
+fasta2a
+httpx
+uvicorn[standard]
+langfuse

@@ -1,0 +1,128 @@
+version: "3.9"
+
+services:
+
+  # ── Mock Orders API ────────────────────────────────────────────────────────
+  mock-api:
+    build:
+      context: ./mock-api
+      dockerfile: Dockerfile
+    ports:
+      - "8003:8003"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── Orders MCP Server (FastMCP) ───────────────────────────────────────────
+  # Centraliza acesso à Orders API. Agents consomem via MCPTools.
+  orders-mcp:
+    build:
+      context: ./orders-mcp
+      dockerfile: Dockerfile
+    ports:
+      - "8004:8004"
+    environment:
+      - ORDERS_API_URL=http://mock-api:8003
+    depends_on:
+      mock-api:
+        condition: service_healthy
+    healthcheck:
+      # MCP endpoint só responde a POST/streaming; sem -f para aceitar 4xx
+      test: ["CMD-SHELL", "curl -sS --max-time 3 -o /dev/null http://localhost:8004/mcp || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  # ── Logistics Agent — PydanticAI A2A Server ────────────────────────────────
+  logistics:
+    build:
+      context: ./logistics
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - LOGFIRE_TOKEN=${LOGFIRE_TOKEN:-}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+      - ORDERS_MCP_URL=http://orders-mcp:8004/mcp
+    depends_on:
+      mock-api:
+        condition: service_healthy
+      orders-mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/.well-known/agent-card.json"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  # ── Financial Agent — Agno A2A Server ────────────────────────────────────
+  financial:
+    build:
+      context: ./financial
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8002"
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+      - ORDERS_MCP_URL=http://orders-mcp:8004/mcp
+    depends_on:
+      mock-api:
+        condition: service_healthy
+      orders-mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/a2a/agents/financial-agent/.well-known/agent-card.json"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  # ── Coordinator — LangGraph ReAct Agent ───────────────────────────────────
+  coordinator:
+    build:
+      context: ./coordinator
+      dockerfile: Dockerfile
+    ports:
+      - "2024:2024"
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - LOGISTICS_URL=http://logistics:8001
+      - FINANCIAL_URL=http://financial:8002
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+      - ORDERS_MCP_URL=http://orders-mcp:8004/mcp
+    depends_on:
+      logistics:
+        condition: service_healthy
+      financial:
+        condition: service_healthy
+      orders-mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2024/ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+
+  # ── Frontend — Agent Chat UI (Next.js) ────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:2024
+        NEXT_PUBLIC_ASSISTANT_ID: coordinator
+    ports:
+      - "3000:3000"
+    depends_on:
+      coordinator:
+        condition: service_healthy
+    restart: unless-stopped
