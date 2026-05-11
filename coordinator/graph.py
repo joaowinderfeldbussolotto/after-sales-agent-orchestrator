@@ -1,9 +1,12 @@
 import asyncio
-import threading
+import logging
 import os
+import threading
 
+import httpx
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage
+from langchain_core.rate_limiters import InMemoryRateLimiter
 from langchain.agents import create_agent
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
@@ -11,6 +14,8 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from coordinator.tools import delegate
 from coordinator.registry import discover_agents
+
+logger = logging.getLogger(__name__)
 
 Langfuse()
 langfuse_handler = CallbackHandler()
@@ -49,10 +54,12 @@ def _load_registry() -> str:
     t.join(timeout=30)
     loaded = result.get("prompt", "")
     if loaded:
-        print("=== Agent Registry loaded ===")
-        print(loaded)
+        logger.info("Agent Registry loaded:\n%s", loaded)
     else:
-        print("WARNING: Agent Registry empty — sub-agents may be unreachable at startup")
+        logger.warning(
+            "Agent Registry empty — sub-agents may be unreachable at startup. "
+            "Check LOGISTICS_URL and FINANCIAL_URL."
+        )
     return loaded
 
 
@@ -84,9 +91,12 @@ def _load_mcp_tools() -> list:
     t.join(timeout=30)
     loaded = result.get("tools", [])
     if loaded:
-        print(f"=== MCP Tools loaded: {[t.name for t in loaded]} ===")
+        logger.info("MCP Tools loaded: %s", [t.name for t in loaded])
     else:
-        print("WARNING: MCP Tools empty — orders-mcp may be unreachable at startup")
+        logger.warning(
+            "MCP Tools empty — orders-mcp may be unreachable at startup. "
+            "Check ORDERS_MCP_URL. fetch_order will be unavailable."
+        )
     return loaded
 
 
@@ -99,10 +109,20 @@ def get_prompt(state) -> list:
 
 
 # ── LangGraph ReAct Agent ─────────────────────────────────────────────────────
+_coordinator_model = os.getenv("COORDINATOR_MODEL", "openai/gpt-oss-120b")
+
+# Rate limiter: Groq free tier ≈ 30 req/min; 0.4 req/s = 24/min com margem
+_rate_limiter = InMemoryRateLimiter(requests_per_second=0.4)
+
 model = ChatGroq(
-    model="openai/gpt-oss-120b",
+    model=_coordinator_model,
     temperature=0,
-    api_key=os.getenv("GROQ_API_KEY")
+    api_key=os.getenv("GROQ_API_KEY"),
+    rate_limiter=_rate_limiter,
+).with_retry(
+    stop_after_attempt=3,
+    wait_exponential_jitter=True,
+    retry_if_exception_type=(httpx.HTTPStatusError, httpx.TransportError),
 )
 
 graph = create_agent(

@@ -41,10 +41,12 @@ def _configure_langfuse_tracing() -> None:
 
 _configure_langfuse_tracing()
 
+_financial_model = os.getenv("FINANCIAL_MODEL", "openai/gpt-oss-20b")
+
 financial_agent = Agent(
     id="financial-agent",
     name="financial-agent",
-    model=Groq(id="openai/gpt-oss-20b"),
+    model=Groq(id=_financial_model),
     tools=[
         check_cdc_eligibility,
         calculate_refund_amount,

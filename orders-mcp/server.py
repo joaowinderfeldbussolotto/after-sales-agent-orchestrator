@@ -1,10 +1,20 @@
 import os
-from fastmcp import FastMCP
+
 import httpx
+from fastmcp import FastMCP
 
 ORDERS_API = os.getenv("ORDERS_API_URL", "http://mock-api:8003")
+_MCP_HTTP_TIMEOUT = float(os.getenv("MCP_HTTP_TIMEOUT", "10"))
 
 mcp = FastMCP("orders-mcp")
+
+
+def _parse(r: httpx.Response) -> dict:
+    """Parse JSON response, returning a structured error dict on failure."""
+    try:
+        return r.json()
+    except Exception:
+        return {"error": f"HTTP {r.status_code}: resposta não-JSON do servidor"}
 
 
 # ── Tools de LEITURA ──────────────────────────────────────────────────────────
@@ -17,10 +27,10 @@ async def fetch_order(order_id: str) -> dict:
         order_id: ID do pedido (ex: PV-2026-00142)
     """
     async with httpx.AsyncClient() as client:
-        r = await client.get(f"{ORDERS_API}/orders/{order_id}", timeout=10.0)
+        r = await client.get(f"{ORDERS_API}/orders/{order_id}", timeout=_MCP_HTTP_TIMEOUT)
         if r.status_code == 404:
             return {"error": f"Pedido {order_id} não encontrado"}
-        return r.json()
+        return _parse(r)
 
 
 @mcp.tool()
@@ -33,11 +43,11 @@ async def fetch_refund_eligibility(order_id: str) -> dict:
     async with httpx.AsyncClient() as client:
         r = await client.get(
             f"{ORDERS_API}/orders/{order_id}/refund-eligibility",
-            timeout=10.0,
+            timeout=_MCP_HTTP_TIMEOUT,
         )
         if r.status_code == 404:
             return {"error": f"Pedido {order_id} não encontrado"}
-        return r.json()
+        return _parse(r)
 
 
 # ── Tools de ESCRITA LOGÍSTICA ────────────────────────────────────────────────
@@ -54,9 +64,9 @@ async def open_incident(order_id: str, reason: str) -> dict:
         r = await client.post(
             f"{ORDERS_API}/orders/{order_id}/incident",
             json={"reason": reason},
-            timeout=10.0,
+            timeout=_MCP_HTTP_TIMEOUT,
         )
-        return r.json()
+        return _parse(r)
 
 
 @mcp.tool()
@@ -71,9 +81,9 @@ async def update_order_status(order_id: str, status: str) -> dict:
         r = await client.put(
             f"{ORDERS_API}/orders/{order_id}/status",
             json={"status": status},
-            timeout=10.0,
+            timeout=_MCP_HTTP_TIMEOUT,
         )
-        return r.json()
+        return _parse(r)
 
 
 # ── Tools de ESCRITA FINANCEIRA ───────────────────────────────────────────────
@@ -91,9 +101,9 @@ async def issue_refund(order_id: str, amount: float, method: str) -> dict:
         r = await client.post(
             f"{ORDERS_API}/orders/{order_id}/refund",
             json={"amount": amount, "method": method},
-            timeout=10.0,
+            timeout=_MCP_HTTP_TIMEOUT,
         )
-        return r.json()
+        return _parse(r)
 
 
 @mcp.tool()
@@ -114,9 +124,9 @@ async def generate_voucher(customer_id: str, value: float, reason: str) -> dict:
                 "reason": reason,
                 "expires_days": 30,
             },
-            timeout=10.0,
+            timeout=_MCP_HTTP_TIMEOUT,
         )
-        return r.json()
+        return _parse(r)
 
 
 if __name__ == "__main__":

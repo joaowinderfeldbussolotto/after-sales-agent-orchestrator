@@ -1,16 +1,38 @@
 import os
+from enum import Enum
 
+from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.agent import Agent as PydanticAgent
 from langfuse import Langfuse
-from . import tools
 
 Langfuse()
 PydanticAgent.instrument_all()
+
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 from pydantic_ai.toolsets import FilteredToolset
 
 from . import tools
+
+
+# ── Structured output ──────────────────────────────────────────────────────────
+
+class DeliveryStatus(str, Enum):
+    on_time = "on_time"
+    delayed_minor = "delayed_minor"   # 1-3 dias
+    delayed_major = "delayed_major"   # 4+ dias
+    delivered = "delivered"
+
+
+class LogisticsReport(BaseModel):
+    status: DeliveryStatus
+    delay_days: int
+    incident_id: str | None = None
+    tracking_events: list[str] = []
+    message: str
+
+
+# ── MCP toolset (escrita logística apenas) ─────────────────────────────────────
 
 _LOGISTICS_MCP_TOOLS = {"open_incident", "update_order_status"}
 
@@ -21,9 +43,13 @@ _orders_mcp = FilteredToolset(
     lambda _ctx, tool_def: tool_def.name in _LOGISTICS_MCP_TOOLS,
 )
 
+_logistics_model = os.getenv("LOGISTICS_MODEL", "groq:meta-llama/llama-4-scout-17b-16e-instruct")
+
 logistics_agent = Agent(
-    "groq:meta-llama/llama-4-scout-17b-16e-instruct",
+    _logistics_model,
     name="Logistics Agent",
+    output_type=LogisticsReport,
+    retries=3,
     instructions="""Você é o Agente de Logística de um e-commerce brasileiro.
 
 RESPONSABILIDADES:
@@ -35,18 +61,10 @@ RESPONSABILIDADES:
 
 REGRAS:
 1. Sempre use calculate_delay_days antes de qualquer outra ação
-2. Se delayed=True: abra uma ocorrência logística independente do número de dias
-3. Se delayed=False: apenas informe o prazo atualizado
-4. Retorne SEMPRE um JSON estruturado com: status, delay_days, incident_id (se aberto), message
-
-FORMATO DE RESPOSTA:
-{
-  "status": "on_time|delayed_minor|delayed_major|delivered",
-  "delay_days": 0,
-  "incident_id": "ABC12345 ou null",
-  "tracking_events": [...],
-  "message": "Mensagem humanizada para o cliente"
-}""",
+2. Se delayed=True e delay_days <= 3: status="delayed_minor"; se delay_days > 3: status="delayed_major"
+3. Se delayed=True: abra uma ocorrência logística com open_incident e registre o incident_id
+4. Se delayed=False: status="on_time", delay_days=0
+5. Se já entregue: status="delivered", delay_days=0""",
     toolsets=[_orders_mcp],
     tools=[
         tools.track_package,
@@ -56,7 +74,6 @@ FORMATO DE RESPOSTA:
     ],
     instrument=True,
 )
-
 
 
 app = logistics_agent.to_a2a(

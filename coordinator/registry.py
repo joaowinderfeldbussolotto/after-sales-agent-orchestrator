@@ -34,7 +34,8 @@ async def discover_agents() -> str:
     """
     lines = ["## Agentes Especializados Disponíveis\n"]
 
-    async with httpx.AsyncClient(timeout=5.0) as client:
+    _timeout = float(os.getenv("REGISTRY_TIMEOUT", "5"))
+    async with httpx.AsyncClient(timeout=_timeout) as client:
         for config in AGENT_CONFIGS:
             url = f"{config['base_url']}{config['card_path']}"
             try:
@@ -52,6 +53,8 @@ async def discover_agents() -> str:
                 lines.append(description)
                 lines.append("")
             except Exception as e:
-                lines.append(f"### {config['name']} — Offline ({type(e).__name__})\n")
+                lines.append(
+                    f"### {config['name']} — Offline ({type(e).__name__}: {e})\n"
+                )
 
     return "\n".join(lines)
