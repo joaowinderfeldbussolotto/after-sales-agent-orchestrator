@@ -1,200 +1,197 @@
 # PostVenda AI — Multi-Agent After-Sales Orchestrator
 
-A multi-agent system for Brazilian e-commerce after-sales support, built with the **A2A protocol** (Agent-to-Agent). Three specialized agents collaborate to handle logistics issues, refunds, and consumer rights queries — all orchestrated by a central coordinator with a real-time chat interface.
+Sistema multi-agente para atendimento pós-venda de e-commerce brasileiro, construído com o **protocolo A2A** (Agent-to-Agent) e um **servidor MCP central** para acesso unificado aos dados de pedidos. Três agentes especializados colaboram para resolver problemas logísticos, reembolsos e dúvidas sobre direitos do consumidor — orquestrados por um coordenador LangGraph com interface de chat em tempo real.
 
-## Architecture
+## Arquitetura
 
 ```
-Browser → http://localhost:3000  (Agent UI / Next.js)
-            │  AG-UI protocol (SSE streaming)
+Browser → http://localhost:3000          (agent-chat-ui — Next.js)
+            │  LangGraph SDK (SSE streaming)
             ▼
-         http://localhost:8000  (Coordinator / Agno AgentOS)
-            │
-            ├── A2A → http://logistics:8001  (PydanticAI / FastA2A)
-            └── A2A → http://financial:8002  (CrewAI / FastAPI)
-                           │
-                       Both read from:
-                       http://mock-api:8003  (FastAPI mock orders service)
+         http://localhost:2024           (Coordinator — LangGraph)
+            │                                          ▲
+            │  A2A JSON-RPC ──→ http://logistics:8001  (PydanticAI)
+            │  A2A REST     ──→ http://financial:8002  (Agno AgentOS)
+            │                                          │
+            └────────── MCP (Streamable HTTP) ─────────┤
+                                ▼                      ▼
+                        http://orders-mcp:8004         │
+                                │                      │
+                                └──→ http://mock-api:8003 (FastAPI)
 ```
 
-| Service | Framework | Model | Port |
+| Serviço | Framework | Modelo (via Groq) | Porta |
 |---|---|---|---|
-| **Coordinator** | Agno (A2A Client + AgentOS) | `openai/gpt-oss-120b` via Groq | 8000 |
-| **Logistics Agent** | PydanticAI (A2A Server) | `llama-3.3-70b-versatile` via Groq | 8001 |
-| **Financial Agent** | CrewAI (A2A Server) | `openai/gpt-oss-20b` via Groq | 8002 |
+| **Coordinator** | LangGraph (ReAct + create_agent) | `openai/gpt-oss-120b` | 2024 |
+| **Logistics Agent** | PydanticAI (FastA2A) | `llama-4-scout-17b-16e-instruct` | 8001 |
+| **Financial Agent** | Agno (AgentOS + A2A) | `openai/gpt-oss-20b` | 8002 |
+| **Orders MCP** | FastMCP (Streamable HTTP) | — | 8004 |
 | **Mock API** | FastAPI | — | 8003 |
-| **Frontend** | Next.js (Agent UI) | — | 3000 |
+| **Frontend** | `langchain-ai/agent-chat-ui` (Next.js) | — | 3000 |
+
+### Por que um MCP central?
+
+Todas as operações de leitura/escrita de pedidos vivem em **um único servidor MCP** (`orders-mcp`). Cada agente acessa apenas as tools relevantes ao seu domínio, usando o **adapter MCP nativo** do seu framework:
+
+| Agente | Adapter | Tools MCP expostas |
+|---|---|---|
+| Coordinator | `langchain-mcp-adapters` (`MultiServerMCPClient`) | `fetch_order` |
+| Logistics | `pydantic_ai.mcp.MCPServerStreamableHTTP` + `FilteredToolset` | `open_incident`, `update_order_status` |
+| Financial | `agno.tools.mcp.MCPTools` | `fetch_order`, `fetch_refund_eligibility`, `issue_refund`, `generate_voucher` |
+
+Isso elimina código duplicado de `httpx` em cada agente, centraliza autenticação/observabilidade no ponto de acesso aos dados, e permite que novos agentes consumam o mesmo catálogo de tools sem reimplementação.
 
 ## Quick Start
 
-### 1. Prerequisites
+### 1. Pré-requisitos
 
 - Docker + Docker Compose
-- A free [Groq API key](https://console.groq.com)
+- Chave gratuita da [Groq](https://console.groq.com)
+- (opcional) Chaves do [Langfuse](https://cloud.langfuse.com) para observabilidade
 
-### 2. Configure
+### 2. Configurar
 
 ```bash
 cp .env.example .env
-# Edit .env and set your GROQ_API_KEY
+# Edite .env com GROQ_API_KEY e (opcionalmente) chaves do Langfuse
 ```
 
-### 3. Run
+### 3. Rodar
 
 ```bash
 docker compose up --build
 ```
 
-First run builds the FAISS index for the CDC RAG (runs once, ~2 min for sentence-transformers download).
+Abra **http://localhost:3000** para conversar com o coordenador.
 
-Open **http://localhost:3000** in your browser to chat with the coordinator.
+> Na sidebar do agent-chat-ui, deixe `Deployment URL = http://localhost:2024` e `Assistant ID = coordinator`.
 
-> The Agent UI sidebar lets you change the API URL. Set it to `http://localhost:8000` if it's not already.
+## Exemplos de uso
 
-## Example Inputs
-
-Paste any of these into the Agent UI chat:
-
----
-
-### Delayed order — triggers logistics + financial escalation
+### Pedido atrasado — aciona logistics + escalação para financial
 
 ```
 Meu pedido PV-2026-00142 devia ter chegado semana passada e até agora não chegou. O que está acontecendo?
 ```
 
-**Expected flow:**
-1. Coordinator fetches order `PV-2026-00142` (Maria Silva, Tênis Runner Pro, R$325,80)
-2. Delegates to **logistics-agent** → tracks `SB123456789BR`, calculates 7+ day delay, opens incident `INC-XXXX`, flags `escalate_financial=true`
-3. Escalates to **financial-agent** → verifies CDC eligibility, generates compensation voucher (~R$30)
-4. Returns consolidated response with incident ID, voucher code, and updated delivery estimate
+**Fluxo esperado:**
+1. Coordinator chama `fetch_order` (via MCP) e identifica o pedido de Maria Silva
+2. Delega para **logistics-agent** (A2A JSON-RPC) → rastreia `SB123456789BR`, calcula atraso, abre incidente via `open_incident` (MCP), sinaliza `escalate_financial=true`
+3. Delega para **financial-agent** (A2A REST/Agno) → verifica elegibilidade CDC, gera voucher de compensação via `generate_voucher` (MCP)
+4. Retorna resposta consolidada ao cliente
 
----
-
-### Delivered order — refund request (regret)
+### Devolução por arrependimento — direto para financial
 
 ```
 Quero devolver o pedido PV-2026-00099. Comprei uma câmera mas não gostei, posso devolver?
 ```
 
-**Expected flow:**
-1. Coordinator fetches order `PV-2026-00099` (João Souza, Câmera WiFi, delivered via PAC)
-2. Delegates to **financial-agent** → checks CDC Art. 49 (7-day regret window), calculates refund (R$189,00, freight not included), processes refund via PIX
-3. Returns response with refund ID, amount, and estimated credit timeline
+**Fluxo:** coordinator → financial-agent → checagem CDC Art. 49 → `issue_refund` via MCP → resposta com ID do reembolso.
 
----
-
-### Consumer rights query
+### Dúvida sobre direitos do consumidor (RAG)
 
 ```
 Comprei o pedido PV-2026-00210 mas o fone veio com defeito. Quais são meus direitos?
 ```
 
-**Expected flow:**
-1. Coordinator fetches order `PV-2026-00210` (Ana Costa, Fone Bluetooth, R$165,80)
-2. Delegates to **financial-agent** → RAG searches CDC for `produto com defeito`, returns Art. 26 (90 dias para duráveis), Art. 18 (30 dias para sanar vício), calculates full refund (R$165,80 including freight)
-3. Returns humanized response with applicable rights and available actions
+**Fluxo:** coordinator → financial-agent → RAG sobre CDC (Art. 18, 26) → cálculo de reembolso integral.
 
----
-
-### Direct API tests
-
-You can also call the agents directly:
+### Testes diretos via API
 
 ```bash
-# Check Mock API
+# Mock API
 curl http://localhost:8003/orders/PV-2026-00142
 
-# Check Logistics Agent Card
+# MCP server (lista tools)
+curl -X POST http://localhost:8004/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+
+# Logistics Agent Card (JSON-RPC A2A)
 curl http://localhost:8001/.well-known/agent-card.json
 
-# Check Financial Agent Card
-curl http://localhost:8002/.well-known/agent-card.json
+# Financial Agent Card (REST A2A / Agno)
+curl http://localhost:8002/a2a/agents/financial-agent/.well-known/agent-card.json
 
-# Check Coordinator status
-curl http://localhost:8000/status
-
-# Send a message directly to the logistics agent via A2A
-curl -X POST http://localhost:8001/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": "test-1",
-    "method": "message/send",
-    "params": {
-      "message": {
-        "role": "user",
-        "messageId": "msg-001",
-        "parts": [{"kind": "text", "text": "Rastreie o pedido PV-2026-00142 com código SB123456789BR. Data prevista: 2026-05-02."}]
-      }
-    }
-  }'
+# Coordinator (LangGraph) health
+curl http://localhost:2024/ok
 ```
 
-## Port Map
+## Mock Orders
 
-| Port | Service | Description |
-|---|---|---|
-| 3000 | frontend | Agent UI — browser chat interface |
-| 8000 | coordinator | Agno AgentOS + AG-UI streaming endpoint |
-| 8001 | logistics | PydanticAI + FastA2A JSON-RPC server |
-| 8002 | financial | CrewAI + FastAPI JSON-RPC server |
-| 8003 | mock-api | Mock orders REST API |
+| Order ID | Cliente | Produto | Status | Cenário |
+|---|---|---|---|---|
+| `PV-2026-00142` | Maria Silva | Tênis Runner Pro (R$325,80) | in_transit | SEDEX atrasado → escalação financeira |
+| `PV-2026-00099` | João Souza | Câmera WiFi (R$189,00) | delivered | PAC entregue → arrependimento CDC Art. 49 |
+| `PV-2026-00210` | Ana Costa | Fone Bluetooth (R$149,90) | delivered | SEDEX entregue → defeito CDC Art. 18/26 |
 
-## Project Structure
+## Protocolos A2A
+
+Os dois agentes especializados implementam variações do [protocolo A2A](https://google.github.io/A2A/):
+
+| Agente | Estilo | Endpoint | Wire format |
+|---|---|---|---|
+| **Logistics** (PydanticAI/FastA2A) | JSON-RPC | `POST /` | `message/send` + polling de `tasks/get` |
+| **Financial** (Agno) | REST (com payload JSON-RPC) | `POST /a2a/agents/financial-agent/v1/message:send` | Body `{id, params: {message}}`, resposta síncrona |
+
+O coordinator detecta o protocolo via campo `protocol` no `AGENT_REGISTRY` (`coordinator/registry.py`) e roteia adequadamente em `coordinator/tools.py:delegate`.
+
+## Estrutura do projeto
 
 ```
 postvenda-ai/
 ├── .env.example
 ├── docker-compose.yml
 ├── frontend/
-│   └── Dockerfile              # Clones + builds agno-agi/agent-ui (Next.js)
-├── mock-api/
-│   ├── data.py                 # In-memory orders, incidents, refunds, vouchers
-│   ├── main.py                 # FastAPI REST endpoints
+│   └── Dockerfile             # Clona + builda langchain-ai/agent-chat-ui
+├── mock-api/                  # FastAPI — fonte da verdade dos pedidos
+│   ├── data.py                # ORDERS, INCIDENTS, REFUNDS, VOUCHERS em memória
+│   ├── main.py                # Endpoints REST
 │   └── Dockerfile
-├── agents/
-│   ├── logistics/              # PydanticAI A2A Server
-│   │   ├── agent.py            # Agent + to_a2a() → ASGI app
-│   │   └── tools.py            # track_package, calculate_delay_days, open_incident, …
-│   └── financial/              # CrewAI A2A Server
-│       ├── agent.py            # CrewAI Agent + FastAPI A2A endpoints
-│       ├── tools.py            # @tool decorators: check_cdc_eligibility, issue_refund, …
-│       └── rag/
-│           ├── cdc.md          # Brazilian Consumer Defense Code content
-│           ├── build_index.py  # FAISS index builder (init container)
-│           └── index.py        # search_cdc() with lru_cache
-└── coordinator/
-    ├── agent.py                # Agno Agent + AgentOS + AGUI interface
-    ├── tools.py                # fetch_order, fetch_refund_eligibility, delegate (A2A)
-    └── registry.py             # Dynamic agent discovery via Agent Cards
+├── orders-mcp/                # FastMCP — gateway único para mock-api
+│   ├── server.py              # 6 tools: fetch_order, fetch_refund_eligibility,
+│   │                          # open_incident, update_order_status,
+│   │                          # issue_refund, generate_voucher
+│   └── Dockerfile
+├── logistics/                 # PydanticAI A2A Server (port 8001)
+│   ├── agent.py               # Agent + FilteredToolset(MCPServerStreamableHTTP)
+│   ├── tools.py               # track_package, quote_reverse_shipping,
+│   │                          # validate_address, calculate_delay_days
+│   └── Dockerfile
+├── financial/                 # Agno AgentOS A2A Server (port 8002)
+│   ├── agent.py               # Agent + MCPTools + AgentOS(a2a_interface=True)
+│   ├── tools.py               # check_cdc_eligibility, calculate_refund_amount,
+│   │                          # get_consumer_rights (RAG)
+│   ├── rag/                   # FAISS index sobre cdc.md
+│   └── Dockerfile
+└── coordinator/               # LangGraph ReAct Agent (port 2024)
+    ├── graph.py               # create_agent + MultiServerMCPClient + Langfuse
+    ├── tools.py               # delegate (A2A roteado por protocolo)
+    ├── registry.py            # Discovery dinâmico via Agent Cards
+    ├── langgraph.json         # Manifesto do LangGraph Server
+    └── Dockerfile
 ```
 
-## Mock Orders
+## Observabilidade
 
-| Order ID | Customer | Product | Status | Scenario |
-|---|---|---|---|---|
-| `PV-2026-00142` | Maria Silva | Tênis Runner Pro (R$299,90) | in_transit | Delayed SEDEX — triggers financial escalation |
-| `PV-2026-00099` | João Souza | Câmera WiFi (R$189,00) | delivered | PAC delivered — test regret refund |
-| `PV-2026-00210` | Ana Costa | Fone Bluetooth (R$149,90) | delivered | SEDEX delivered — test defect claim |
+Todos os três agentes emitem traces para o **Langfuse** quando `LANGFUSE_PUBLIC_KEY` e `LANGFUSE_SECRET_KEY` estão definidos:
 
-## A2A Protocol
+- **Coordinator** → `langfuse.langchain.CallbackHandler` injetado via `.with_config({"callbacks": [...]})`
+- **Logistics** → `PydanticAgent.instrument_all()` + `instrument=True`
+- **Financial** → OpenTelemetry + `AgnoInstrumentor` exportando OTLP/HTTP para o endpoint Langfuse
 
-Both specialized agents implement the [A2A protocol](https://google.github.io/A2A/):
-- **Agent Card** at `GET /.well-known/agent-card.json` — describes capabilities
-- **JSON-RPC** at `POST /` — `message/send` and `tasks/get` methods
-- **PydanticAI** (FastA2A) runs tasks asynchronously — coordinator polls `tasks/get`
-- **CrewAI** returns results synchronously — `message/send` responds with `completed` state
+Os traces aparecem em **https://cloud.langfuse.com** sob o projeto correspondente à chave.
 
-## Tech Decisions
+## Decisões técnicas
 
-| Decision | Reason |
+| Decisão | Motivo |
 |---|---|
-| **Groq** for all models | Free tier, low latency, solid tool-calling support |
-| **`llama-3.3-70b-versatile`** for logistics | Robust tool-calling across 6 tools with escalation logic |
-| **`gpt-oss-120b`** for coordinator | Most capable Groq model for multi-agent reasoning |
-| **`gpt-oss-20b`** for financial | Balance of cost/capability for structured financial tasks |
-| **`lru_cache`** on RAG index | Load FAISS once per process, avoid repeated deserialization |
-| **Shared volume** for RAG | `rag-builder` builds and exits; `financial` reads from same volume |
-| **`escalate_financial` flag** | Logistics agent signals explicitly — coordinator doesn't need to parse numbers |
-| **Polling at 1.5s interval** | Balances responsiveness vs. request count; 55s timeout |
+| **MCP central (orders-mcp)** | Elimina httpx duplicado, centraliza acesso aos dados, permite onboarding de novos agentes sem mudar mock-api |
+| **Adapters MCP nativos** | `langchain-mcp-adapters` no coord, `MCPServerStreamableHTTP` no PydanticAI, `MCPTools` no Agno — cada framework usa sua API idiomática |
+| **Filtragem por nome** | Cada agente recebe só as tools relevantes ao seu domínio (princípio de menor privilégio) |
+| **LangGraph para o coord** | `create_agent` (ReAct) + suporte nativo a SSE streaming via LangGraph Server, integração direta com agent-chat-ui |
+| **Discovery via Agent Cards** | Routing rules vivem no campo `description` do card de cada agente — coordinator é agnóstico ao domínio |
+| **Agno para o financial** | `AgentOS(a2a_interface=True)` gera endpoints A2A automáticos; bom suporte a RAG via Knowledge |
+| **PydanticAI para o logistics** | Tool calling tipado + FastA2A nativo + `FilteredToolset` para restringir MCP |
+| **Groq para todos os modelos** | Free tier, baixa latência, bom suporte a tool calling |
