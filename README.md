@@ -1,8 +1,10 @@
 # PostVenda AI — Multi-Agent After-Sales Orchestrator
 
-Sistema multi-agente para atendimento pós-venda de e-commerce brasileiro, construído com o **protocolo A2A** (Agent-to-Agent) e um **servidor MCP central** para acesso unificado aos dados de pedidos. Três agentes especializados colaboram para resolver problemas logísticos, reembolsos e dúvidas sobre direitos do consumidor — orquestrados por um coordenador LangGraph com interface de chat em tempo real.
+A multi-agent system for Brazilian e-commerce after-sales support, built with the **A2A protocol** (Agent-to-Agent) and a **central MCP server** that provides unified access to order data. Three specialized agents collaborate to solve logistics issues, refunds, and consumer-rights questions — orchestrated by a LangGraph coordinator with a real-time chat interface.
 
-## Arquitetura
+## Architecture
+
+![PostVenda AI Architecture](assets/post-sales-agent-orchestrator.png)
 
 ```
 Browser → http://localhost:3000          (agent-chat-ui — Next.js)
@@ -20,7 +22,7 @@ Browser → http://localhost:3000          (agent-chat-ui — Next.js)
                                 └──→ http://mock-api:8003 (FastAPI)
 ```
 
-| Serviço | Framework | Modelo (via Groq) | Porta |
+| Service | Framework | Model (via Groq) | Port |
 |---|---|---|---|
 | **Coordinator** | LangGraph (ReAct + create_agent) | `openai/gpt-oss-120b` | 2024 |
 | **Logistics Agent** | PydanticAI (FastA2A) | `llama-4-scout-17b-16e-instruct` | 8001 |
@@ -29,80 +31,80 @@ Browser → http://localhost:3000          (agent-chat-ui — Next.js)
 | **Mock API** | FastAPI | — | 8003 |
 | **Frontend** | `langchain-ai/agent-chat-ui` (Next.js) | — | 3000 |
 
-### Por que um MCP central?
+### Why a Central MCP?
 
-Todas as operações de leitura/escrita de pedidos vivem em **um único servidor MCP** (`orders-mcp`). Cada agente acessa apenas as tools relevantes ao seu domínio, usando o **adapter MCP nativo** do seu framework:
+All order read/write operations live in a **single MCP server** (`orders-mcp`). Each agent accesses only the tools relevant to its domain, using the **native MCP adapter** of its framework:
 
-| Agente | Adapter | Tools MCP expostas |
+| Agent | Adapter | Exposed MCP Tools |
 |---|---|---|
 | Coordinator | `langchain-mcp-adapters` (`MultiServerMCPClient`) | `fetch_order` |
 | Logistics | `pydantic_ai.mcp.MCPServerStreamableHTTP` + `FilteredToolset` | `open_incident`, `update_order_status` |
 | Financial | `agno.tools.mcp.MCPTools` | `fetch_order`, `fetch_refund_eligibility`, `issue_refund`, `generate_voucher` |
 
-Isso elimina código duplicado de `httpx` em cada agente, centraliza autenticação/observabilidade no ponto de acesso aos dados, e permite que novos agentes consumam o mesmo catálogo de tools sem reimplementação.
+This removes duplicated `httpx` code, centralizes authentication/observability at the data access point, and lets new agents consume the same tool catalog without reimplementation.
 
 ## Quick Start
 
-### 1. Pré-requisitos
+### 1. Prerequisites
 
 - Docker + Docker Compose
-- Chave gratuita da [Groq](https://console.groq.com)
-- (opcional) Chaves do [Langfuse](https://cloud.langfuse.com) para observabilidade
+- Free API key from [Groq](https://console.groq.com)
+- (optional) [Langfuse](https://cloud.langfuse.com) keys for observability
 
-### 2. Configurar
+### 2. Configure
 
 ```bash
 cp .env.example .env
-# Edite .env com GROQ_API_KEY e (opcionalmente) chaves do Langfuse
+# Edit .env with GROQ_API_KEY and (optionally) Langfuse keys
 ```
 
-### 3. Rodar
+### 3. Run
 
 ```bash
 docker compose up --build
 ```
 
-Abra **http://localhost:3000** para conversar com o coordenador.
+Open **http://localhost:3000** to chat with the coordinator.
 
-> Na sidebar do agent-chat-ui, deixe `Deployment URL = http://localhost:2024` e `Assistant ID = coordinator`.
+> In the agent-chat-ui sidebar, set `Deployment URL = http://localhost:2024` and `Assistant ID = coordinator`.
 
-## Exemplos de uso
+## Usage Examples
 
-### Pedido atrasado — aciona logistics + escalação para financial
-
-```
-Meu pedido PV-2026-00142 devia ter chegado semana passada e até agora não chegou. O que está acontecendo?
-```
-
-**Fluxo esperado:**
-1. Coordinator chama `fetch_order` (via MCP) e identifica o pedido de Maria Silva
-2. Delega para **logistics-agent** (A2A JSON-RPC) → rastreia `SB123456789BR`, calcula atraso, abre incidente via `open_incident` (MCP), sinaliza `escalate_financial=true`
-3. Delega para **financial-agent** (A2A REST/Agno) → verifica elegibilidade CDC, gera voucher de compensação via `generate_voucher` (MCP)
-4. Retorna resposta consolidada ao cliente
-
-### Devolução por arrependimento — direto para financial
+### Late delivery — triggers logistics + escalation to financial
 
 ```
-Quero devolver o pedido PV-2026-00099. Comprei uma câmera mas não gostei, posso devolver?
+My order PV-2026-00142 was supposed to arrive last week and it still has not arrived. What is going on?
 ```
 
-**Fluxo:** coordinator → financial-agent → checagem CDC Art. 49 → `issue_refund` via MCP → resposta com ID do reembolso.
+**Expected flow:**
+1. Coordinator calls `fetch_order` (via MCP) and identifies Maria Silva's order
+2. Delegates to **logistics-agent** (A2A JSON-RPC) → tracks `SB123456789BR`, calculates delay, opens an incident via `open_incident` (MCP), signals `escalate_financial=true`
+3. Delegates to **financial-agent** (A2A REST/Agno) → checks CDC eligibility, issues a compensation voucher via `generate_voucher` (MCP)
+4. Returns a consolidated customer response
 
-### Dúvida sobre direitos do consumidor (RAG)
+### Return by regret — direct to financial
 
 ```
-Comprei o pedido PV-2026-00210 mas o fone veio com defeito. Quais são meus direitos?
+I want to return order PV-2026-00099. I bought a camera but did not like it, can I return it?
 ```
 
-**Fluxo:** coordinator → financial-agent → RAG sobre CDC (Art. 18, 26) → cálculo de reembolso integral.
+**Flow:** coordinator → financial-agent → CDC Art. 49 check → `issue_refund` via MCP → response with refund ID.
 
-### Testes diretos via API
+### Consumer rights question (RAG)
+
+```
+I bought order PV-2026-00210 but the headphones arrived defective. What are my rights?
+```
+
+**Flow:** coordinator → financial-agent → CDC RAG (Art. 18, 26) → full refund calculation.
+
+### Direct API Tests
 
 ```bash
 # Mock API
 curl http://localhost:8003/orders/PV-2026-00142
 
-# MCP server (lista tools)
+# MCP server (list tools)
 curl -X POST http://localhost:8004/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
@@ -120,36 +122,36 @@ curl http://localhost:2024/ok
 
 ## Mock Orders
 
-| Order ID | Cliente | Produto | Status | Cenário |
+| Order ID | Customer | Product | Status | Scenario |
 |---|---|---|---|---|
-| `PV-2026-00142` | Maria Silva | Tênis Runner Pro (R$325,80) | in_transit | SEDEX atrasado → escalação financeira |
-| `PV-2026-00099` | João Souza | Câmera WiFi (R$189,00) | delivered | PAC entregue → arrependimento CDC Art. 49 |
-| `PV-2026-00210` | Ana Costa | Fone Bluetooth (R$149,90) | delivered | SEDEX entregue → defeito CDC Art. 18/26 |
+| `PV-2026-00142` | Maria Silva | Runner Pro Sneakers (R$325,80) | in_transit | SEDEX delayed → financial escalation |
+| `PV-2026-00099` | Joao Souza | WiFi Camera (R$189,00) | delivered | PAC delivered → regret (CDC Art. 49) |
+| `PV-2026-00210` | Ana Costa | Bluetooth Headphones (R$149,90) | delivered | SEDEX delivered → defect (CDC Art. 18/26) |
 
-## Protocolos A2A
+## A2A Protocols
 
-Os dois agentes especializados implementam variações do [protocolo A2A](https://google.github.io/A2A/):
+The two specialized agents implement different variants of the [A2A protocol](https://google.github.io/A2A/):
 
-| Agente | Estilo | Endpoint | Wire format |
+| Agent | Style | Endpoint | Wire format |
 |---|---|---|---|
-| **Logistics** (PydanticAI/FastA2A) | JSON-RPC | `POST /` | `message/send` + polling de `tasks/get` |
-| **Financial** (Agno) | REST (com payload JSON-RPC) | `POST /a2a/agents/financial-agent/v1/message:send` | Body `{id, params: {message}}`, resposta síncrona |
+| **Logistics** (PydanticAI/FastA2A) | JSON-RPC | `POST /` | `message/send` + polling `tasks/get` |
+| **Financial** (Agno) | REST (JSON-RPC payload) | `POST /a2a/agents/financial-agent/v1/message:send` | Body `{id, params: {message}}`, synchronous response |
 
-O coordinator detecta o protocolo via campo `protocol` no `AGENT_REGISTRY` (`coordinator/registry.py`) e roteia adequadamente em `coordinator/tools.py:delegate`.
+The coordinator detects the protocol via the `protocol` field in `AGENT_REGISTRY` (`coordinator/registry.py`) and routes accordingly in `coordinator/tools.py:delegate`.
 
-## Estrutura do projeto
+## Project Structure
 
 ```
 postvenda-ai/
 ├── .env.example
 ├── docker-compose.yml
 ├── frontend/
-│   └── Dockerfile             # Clona + builda langchain-ai/agent-chat-ui
-├── mock-api/                  # FastAPI — fonte da verdade dos pedidos
-│   ├── data.py                # ORDERS, INCIDENTS, REFUNDS, VOUCHERS em memória
-│   ├── main.py                # Endpoints REST
+│   └── Dockerfile             # Clones + builds langchain-ai/agent-chat-ui
+├── mock-api/                  # FastAPI — source of truth for orders
+│   ├── data.py                # ORDERS, INCIDENTS, REFUNDS, VOUCHERS in memory
+│   ├── main.py                # REST endpoints
 │   └── Dockerfile
-├── orders-mcp/                # FastMCP — gateway único para mock-api
+├── orders-mcp/                # FastMCP — single gateway to mock-api
 │   ├── server.py              # 6 tools: fetch_order, fetch_refund_eligibility,
 │   │                          # open_incident, update_order_status,
 │   │                          # issue_refund, generate_voucher
@@ -163,35 +165,35 @@ postvenda-ai/
 │   ├── agent.py               # Agent + MCPTools + AgentOS(a2a_interface=True)
 │   ├── tools.py               # check_cdc_eligibility, calculate_refund_amount,
 │   │                          # get_consumer_rights (RAG)
-│   ├── rag/                   # FAISS index sobre cdc.md
+│   ├── rag/                   # FAISS index over cdc.md
 │   └── Dockerfile
 └── coordinator/               # LangGraph ReAct Agent (port 2024)
     ├── graph.py               # create_agent + MultiServerMCPClient + Langfuse
-    ├── tools.py               # delegate (A2A roteado por protocolo)
-    ├── registry.py            # Discovery dinâmico via Agent Cards
-    ├── langgraph.json         # Manifesto do LangGraph Server
+    ├── tools.py               # delegate (A2A routed by protocol)
+    ├── registry.py            # Dynamic discovery via Agent Cards
+    ├── langgraph.json         # LangGraph Server manifest
     └── Dockerfile
 ```
 
-## Observabilidade
+## Observability
 
-Todos os três agentes emitem traces para o **Langfuse** quando `LANGFUSE_PUBLIC_KEY` e `LANGFUSE_SECRET_KEY` estão definidos:
+All three agents emit traces to **Langfuse** when `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are defined:
 
-- **Coordinator** → `langfuse.langchain.CallbackHandler` injetado via `.with_config({"callbacks": [...]})`
+- **Coordinator** → `langfuse.langchain.CallbackHandler` injected via `.with_config({"callbacks": [...]})`
 - **Logistics** → `PydanticAgent.instrument_all()` + `instrument=True`
-- **Financial** → OpenTelemetry + `AgnoInstrumentor` exportando OTLP/HTTP para o endpoint Langfuse
+- **Financial** → OpenTelemetry + `AgnoInstrumentor` exporting OTLP/HTTP to the Langfuse endpoint
 
-Os traces aparecem em **https://cloud.langfuse.com** sob o projeto correspondente à chave.
+Traces appear in **https://cloud.langfuse.com** under the project tied to the key.
 
-## Decisões técnicas
+## Technical Decisions
 
-| Decisão | Motivo |
+| Decision | Rationale |
 |---|---|
-| **MCP central (orders-mcp)** | Elimina httpx duplicado, centraliza acesso aos dados, permite onboarding de novos agentes sem mudar mock-api |
-| **Adapters MCP nativos** | `langchain-mcp-adapters` no coord, `MCPServerStreamableHTTP` no PydanticAI, `MCPTools` no Agno — cada framework usa sua API idiomática |
-| **Filtragem por nome** | Cada agente recebe só as tools relevantes ao seu domínio (princípio de menor privilégio) |
-| **LangGraph para o coord** | `create_agent` (ReAct) + suporte nativo a SSE streaming via LangGraph Server, integração direta com agent-chat-ui |
-| **Discovery via Agent Cards** | Routing rules vivem no campo `description` do card de cada agente — coordinator é agnóstico ao domínio |
-| **Agno para o financial** | `AgentOS(a2a_interface=True)` gera endpoints A2A automáticos; bom suporte a RAG via Knowledge |
-| **PydanticAI para o logistics** | Tool calling tipado + FastA2A nativo + `FilteredToolset` para restringir MCP |
-| **Groq para todos os modelos** | Free tier, baixa latência, bom suporte a tool calling |
+| **Central MCP (orders-mcp)** | Eliminates duplicated httpx, centralizes data access, and allows new agents without touching mock-api |
+| **Native MCP adapters** | `langchain-mcp-adapters` in coordinator, `MCPServerStreamableHTTP` in PydanticAI, `MCPTools` in Agno — each framework uses its idiomatic API |
+| **Name-based filtering** | Each agent receives only the tools relevant to its domain (least privilege) |
+| **LangGraph for coordinator** | `create_agent` (ReAct) + native SSE streaming support via LangGraph Server + agent-chat-ui integration |
+| **Discovery via Agent Cards** | Routing rules live in the `description` of each agent card — coordinator remains domain-agnostic |
+| **Agno for financial** | `AgentOS(a2a_interface=True)` generates A2A endpoints automatically; solid RAG support via Knowledge |
+| **PydanticAI for logistics** | Typed tool calling + native FastA2A + `FilteredToolset` to restrict MCP |
+| **Groq for all models** | Free tier, low latency, strong tool calling support |
