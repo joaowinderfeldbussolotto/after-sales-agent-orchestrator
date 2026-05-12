@@ -1,5 +1,37 @@
+import logging
+import os
+
 import httpx
 from langchain_core.tools import tool
+
+logger = logging.getLogger(__name__)
+
+_A2A_TIMEOUT = float(os.getenv("A2A_TIMEOUT", "60"))
+_A2A_AGNO_TIMEOUT = float(os.getenv("A2A_AGNO_TIMEOUT", "120"))
+_A2A_POLL_TIMEOUT = int(os.getenv("A2A_POLL_TIMEOUT", "55"))
+_POLL_MAX_CONSECUTIVE_ERRORS = 3
+
+
+def _client(timeout: float) -> httpx.AsyncClient:
+    """httpx client com retry em falhas de conexão transientes."""
+    transport = httpx.AsyncHTTPTransport(retries=3)
+    return httpx.AsyncClient(timeout=timeout, transport=transport)
+
+
+async def _call_agno_rest(endpoint: str, payload: dict, agent_name: str) -> str:
+    """Span Langfuse: chamada A2A REST ao Agno."""
+    async with _client(_A2A_AGNO_TIMEOUT) as client:
+        r = await client.post(endpoint, json=payload)
+        r.raise_for_status()
+        return _extract_agno_text(r.json())
+
+
+async def _call_json_rpc(base_url: str, payload: dict) -> dict:
+    """Span Langfuse: chamada message/send JSON-RPC."""
+    async with _client(_A2A_TIMEOUT) as client:
+        r = await client.post(f"{base_url}/", json=payload)
+        r.raise_for_status()
+        return r.json()
 
 
 @tool
@@ -33,22 +65,23 @@ async def delegate(agent_name: str, task: str) -> str:
     }
 
     if protocol == "agno-rest":
-        # Agno's SendMessageRequest expects JSON-RPC-like body with id + params
-        # Response is {"id": ..., "result": {"status": ..., "history": [...], "artifacts": [...]}}
         endpoint = f"{base_url}/a2a/agents/{agent_name}/v1/message:send"
         payload = {
             "jsonrpc": "2.0",
             "id": f"req-{id(task)}",
             "params": {"message": message},
         }
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            try:
-                r = await client.post(endpoint, json=payload)
-                return _extract_agno_text(r.json())
-            except httpx.TimeoutException:
-                return f"Timeout ao aguardar resposta de {agent_name}."
-            except Exception as e:
-                return f"Erro de comunicação com {agent_name}: {str(e)}"
+        try:
+            logger.info("A2A agno-rest → %s", endpoint)
+            result = await _call_agno_rest(endpoint, payload, agent_name)
+            logger.info("A2A agno-rest ← %s: %.120s", agent_name, result)
+            return result
+        except httpx.HTTPError as e:
+            logger.warning("A2A http error: %s — %s", agent_name, e)
+            raise
+        except Exception as e:
+            logger.error("A2A error: %s — %s", agent_name, e)
+            return f"Erro de comunicação com {agent_name}: {str(e)}"
 
     # JSON-RPC (FastA2A / PydanticAI)
     payload = {
@@ -58,14 +91,15 @@ async def delegate(agent_name: str, task: str) -> str:
         "params": {"message": message},
     }
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        try:
-            r = await client.post(f"{base_url}/", json=payload)
-            response = r.json()
-        except httpx.TimeoutException:
-            return f"Timeout ao aguardar resposta de {agent_name}."
-        except Exception as e:
-            return f"Erro de comunicação com {agent_name}: {str(e)}"
+    try:
+        logger.info("A2A json-rpc → %s/", base_url)
+        response = await _call_json_rpc(base_url, payload)
+    except httpx.HTTPError as e:
+        logger.warning("A2A http error: %s — %s", agent_name, e)
+        raise
+    except Exception as e:
+        logger.error("A2A error: %s — %s", agent_name, e)
+        return f"Erro de comunicação com {agent_name}: {str(e)}"
 
     error = response.get("error")
     if error:
@@ -80,7 +114,7 @@ async def delegate(agent_name: str, task: str) -> str:
     # FastA2A (PydanticAI) — retorna 'working', faz polling
     task_id = result.get("id")
     if task_id and status_state in ("submitted", "working"):
-        return await _poll_task(base_url, task_id, timeout=55)
+        return await _poll_task(base_url, task_id, timeout=_A2A_POLL_TIMEOUT)
 
     return f"Resposta inesperada de {agent_name}: {response}"
 
@@ -91,8 +125,9 @@ async def _poll_task(base_url: str, task_id: str, timeout: int = 55) -> str:
 
     elapsed = 0.0
     interval = 1.5
+    consecutive_errors = 0
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with _client(10.0) as client:
         while elapsed < timeout:
             await asyncio.sleep(interval)
             elapsed += interval
@@ -107,7 +142,18 @@ async def _poll_task(base_url: str, task_id: str, timeout: int = 55) -> str:
                     },
                 )
                 task = r.json().get("result", {})
-            except Exception:
+                consecutive_errors = 0
+            except Exception as e:
+                consecutive_errors += 1
+                logger.warning(
+                    "poll error %d/%d for %s: %s",
+                    consecutive_errors,
+                    _POLL_MAX_CONSECUTIVE_ERRORS,
+                    task_id,
+                    e,
+                )
+                if consecutive_errors >= _POLL_MAX_CONSECUTIVE_ERRORS:
+                    return f"Agente inacessível após {consecutive_errors} tentativas: {e}"
                 continue
 
             state = task.get("status", {}).get("state")
