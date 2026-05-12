@@ -148,7 +148,7 @@ This is a demo environment (non-persistent by design).
 ### 2) Configure environment
 
 ```bash
-cd /home/runner/work/after-sales-agent-orchestrator/after-sales-agent-orchestrator
+# from the repository root
 cp .env.example .env
 # fill GROQ_API_KEY
 # optional: LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, model/timeouts overrides
