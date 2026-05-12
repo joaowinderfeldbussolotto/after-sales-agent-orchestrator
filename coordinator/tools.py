@@ -3,7 +3,6 @@ import os
 
 import httpx
 from langchain_core.tools import tool
-from langfuse import observe
 
 logger = logging.getLogger(__name__)
 
@@ -19,19 +18,19 @@ def _client(timeout: float) -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=timeout, transport=transport)
 
 
-@observe(as_type="tool", name="a2a_agno_rest")
 async def _call_agno_rest(endpoint: str, payload: dict, agent_name: str) -> str:
     """Span Langfuse: chamada A2A REST ao Agno."""
     async with _client(_A2A_AGNO_TIMEOUT) as client:
         r = await client.post(endpoint, json=payload)
+        r.raise_for_status()
         return _extract_agno_text(r.json())
 
 
-@observe(as_type="tool", name="a2a_json_rpc_send")
 async def _call_json_rpc(base_url: str, payload: dict) -> dict:
     """Span Langfuse: chamada message/send JSON-RPC."""
     async with _client(_A2A_TIMEOUT) as client:
         r = await client.post(f"{base_url}/", json=payload)
+        r.raise_for_status()
         return r.json()
 
 
@@ -77,9 +76,9 @@ async def delegate(agent_name: str, task: str) -> str:
             result = await _call_agno_rest(endpoint, payload, agent_name)
             logger.info("A2A agno-rest ← %s: %.120s", agent_name, result)
             return result
-        except httpx.TimeoutException:
-            logger.warning("A2A timeout: %s", agent_name)
-            return f"Timeout ao aguardar resposta de {agent_name}."
+        except httpx.HTTPError as e:
+            logger.warning("A2A http error: %s — %s", agent_name, e)
+            raise
         except Exception as e:
             logger.error("A2A error: %s — %s", agent_name, e)
             return f"Erro de comunicação com {agent_name}: {str(e)}"
@@ -95,9 +94,9 @@ async def delegate(agent_name: str, task: str) -> str:
     try:
         logger.info("A2A json-rpc → %s/", base_url)
         response = await _call_json_rpc(base_url, payload)
-    except httpx.TimeoutException:
-        logger.warning("A2A timeout: %s", agent_name)
-        return f"Timeout ao aguardar resposta de {agent_name}."
+    except httpx.HTTPError as e:
+        logger.warning("A2A http error: %s — %s", agent_name, e)
+        raise
     except Exception as e:
         logger.error("A2A error: %s — %s", agent_name, e)
         return f"Erro de comunicação com {agent_name}: {str(e)}"

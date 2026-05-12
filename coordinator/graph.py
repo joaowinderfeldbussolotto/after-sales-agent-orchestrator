@@ -8,6 +8,7 @@ from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage
 from langchain_core.rate_limiters import InMemoryRateLimiter
 from langchain.agents import create_agent
+from langchain.agents.middleware import ModelRetryMiddleware, ToolRetryMiddleware
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -119,16 +120,31 @@ model = ChatGroq(
     temperature=0,
     api_key=os.getenv("GROQ_API_KEY"),
     rate_limiter=_rate_limiter,
-).with_retry(
-    stop_after_attempt=3,
-    wait_exponential_jitter=True,
-    retry_if_exception_type=(httpx.HTTPStatusError, httpx.TransportError),
 )
 
 graph = create_agent(
     model=model,
     tools=[*_mcp_tools, delegate],
     system_prompt=get_prompt(None)[0],
+    middleware=[
+        ModelRetryMiddleware(
+            max_retries=2,
+            retry_on=(httpx.HTTPStatusError, httpx.TransportError, httpx.TimeoutException),
+            backoff_factor=2.0,
+            initial_delay=1.0,
+            jitter=True,
+            on_failure="continue",
+        ),
+        ToolRetryMiddleware(
+            max_retries=2,
+            tools=["fetch_order", "delegate"],
+            retry_on=(httpx.HTTPStatusError, httpx.TransportError, httpx.TimeoutException),
+            backoff_factor=2.0,
+            initial_delay=1.0,
+            jitter=True,
+            on_failure="return_message",
+        ),
+    ],
 ).with_config({
     "callbacks": [langfuse_handler],
     "metadata": {"langfuse_tags": ["coordinator", "postvenda-ai"]},
